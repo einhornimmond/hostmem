@@ -1,4 +1,4 @@
-#include "hostmem/utils/converter.h"
+#include "hostmem/converter.h"
 #include "hostmem/memory.h"
 #include "hostmem/result.h"
 #include <stdint.h>

@@ -134,7 +134,6 @@ descriptor that came from `hostmem_create`.
 
 ```c
 /** @defgroup hostmem_memory hostmem_memory
-  *  @ingroup utils
   *  @brief Allocator that is either a bump arena or plain malloc/free
   *  @{
   */
@@ -144,18 +143,16 @@ descriptor that came from `hostmem_create`.
 /** @} */
 ```
 
-- Modules MUST belong to a parent via `@ingroup` with their folder name (`utils`).
-- If the parent does not exist, DEFINE it once:
-
-```c
-/** @defgroup utils Utilities */
-```
+- Every module sits at the top level. There is no parent group and no `@ingroup`: the headers
+  live in one flat directory because everything this library contains is general purpose, and a
+  category that covers all of it separates nothing.
 
 ### Rules
 
 - One module per header
 - All public API must be inside the module block
 - Use flat, stable identifiers (`hostmem_memory`)
+- `include/hostmem/` stays flat — a header is `hostmem/bucket_vector.h`, never a subfolder deep
 
 ----------
 

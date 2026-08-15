@@ -1,5 +1,5 @@
-#ifndef HOSTMEM_UTILS_CONVERTER_H
-#define HOSTMEM_UTILS_CONVERTER_H
+#ifndef HOSTMEM_CONVERTER_H
+#define HOSTMEM_CONVERTER_H
 
 #include "hostmem/result.h"
 
@@ -10,11 +10,8 @@
 extern "C" {
 #endif
 
-/** @defgroup utils Utilities */
-
 /**
  * @defgroup hostmem_converter hostmem_converter
- * @ingroup utils
  * @brief Efficient conversion of uint64_t to string and size measurement.
  * Provides functions to convert uint64_t values to their string representation using the
  * LR-algorithm, as well as a function to calculate the required string size for a given uint64_t
@@ -89,4 +86,4 @@ uint8_t hostmem_int64_to_string_size(int64_t value);
 }
 #endif
 
-#endif // HOSTMEM_UTILS_CONVERTER_H
+#endif // HOSTMEM_CONVERTER_H

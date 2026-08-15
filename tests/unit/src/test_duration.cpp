@@ -1,4 +1,4 @@
-#include "hostmem/utils/duration.h"
+#include "hostmem/duration.h"
 #include "memory_limit.h"
 #include <gtest/gtest.h>
 

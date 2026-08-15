@@ -1,10 +1,10 @@
-#include "hostmem/utils/mono_timer.h"
+#include "hostmem/mono_timer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-#include "hostmem/utils/duration.h"
+#include "hostmem/duration.h"
 
 #ifdef _WIN32
 #include <windows.h>

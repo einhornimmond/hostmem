@@ -1,7 +1,7 @@
 #include "bench_report.h"
-#include "hostmem/utils/converter.h"
-#include "hostmem/utils/duration.h"
-#include "hostmem/utils/mono_timer.h"
+#include "hostmem/converter.h"
+#include "hostmem/duration.h"
+#include "hostmem/mono_timer.h"
 
 #include <inttypes.h>
 #include <stdio.h>

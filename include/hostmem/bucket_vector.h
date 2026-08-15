@@ -1,5 +1,5 @@
-#ifndef HOSTMEM_UTILS_BUCKET_VECTOR_H
-#define HOSTMEM_UTILS_BUCKET_VECTOR_H
+#ifndef HOSTMEM_BUCKET_VECTOR_H
+#define HOSTMEM_BUCKET_VECTOR_H
 
 #include "hostmem/memory.h"
 #include "hostmem/result.h"
@@ -19,11 +19,8 @@ extern "C" {
 #define static_assert _Static_assert
 #endif
 
-/** @defgroup utils Utilities */
-
 /**
  * @defgroup hostmem_bucket_vector hostmem_bucket_vector
- * @ingroup utils
  * @brief Growing sequence of fixed-size buckets — a deque without push_front.
  *
  * Elements settle into buckets of `1 << log2_bucket` slots. A bucket, once allocated, never
@@ -558,4 +555,4 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
 }
 #endif
 
-#endif // HOSTMEM_UTILS_BUCKET_VECTOR_H
+#endif // HOSTMEM_BUCKET_VECTOR_H

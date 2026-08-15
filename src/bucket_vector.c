@@ -1,4 +1,4 @@
-#include "hostmem/utils/bucket_vector.h"
+#include "hostmem/bucket_vector.h"
 
 #include "hostmem/memory.h"
 #include "hostmem/result.h"

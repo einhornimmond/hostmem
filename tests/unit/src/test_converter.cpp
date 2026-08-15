@@ -1,5 +1,5 @@
-#include "hostmem/utils/converter.h"
-#include "hostmem/utils/mono_timer.h"
+#include "hostmem/converter.h"
+#include "hostmem/mono_timer.h"
 #include <gtest/gtest.h>
 
 #include "memory_limit.h"

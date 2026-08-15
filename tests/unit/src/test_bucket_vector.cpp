@@ -1,5 +1,5 @@
-#include "hostmem/utils/bucket_vector.h"
-#include "hostmem/utils/mono_timer.h"
+#include "hostmem/bucket_vector.h"
+#include "hostmem/mono_timer.h"
 #include <gtest/gtest.h>
 
 #include "memory_limit.h"

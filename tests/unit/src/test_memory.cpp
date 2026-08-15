@@ -1,6 +1,6 @@
 #include "hostmem/memory.h"
+#include "hostmem/memory_block.h"
 #include "hostmem/result.h"
-#include "hostmem/utils/memory_block.h"
 #include "memory_limit.h"
 #include <cstdlib>
 #include <cstring>

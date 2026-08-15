@@ -1,5 +1,5 @@
-#ifndef HOSTMEM_UTILS_DURATION_H
-#define HOSTMEM_UTILS_DURATION_H
+#ifndef HOSTMEM_DURATION_H
+#define HOSTMEM_DURATION_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -8,11 +8,8 @@
 extern "C" {
 #endif
 
-/** @defgroup utils Utilities */
-
 /**
  * @defgroup hostmem_duration hostmem_duration
- * @ingroup utils
  * @brief Duration representation in nanoseconds.
  *
  * A duration is represented in nanoseconds, allowing for precise time measurements.
@@ -59,4 +56,4 @@ int hostmem_duration_string(
 }
 #endif
 
-#endif // HOSTMEM_UTILS_DURATION_H
+#endif // HOSTMEM_DURATION_H

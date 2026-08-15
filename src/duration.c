@@ -1,8 +1,8 @@
-#include "hostmem/utils/duration.h"
+#include "hostmem/duration.h"
 
 #include <string.h>
 
-#include "hostmem/utils/converter.h"
+#include "hostmem/converter.h"
 
 int hostmem_duration_string(
     char *buffer, size_t buffer_size, hostmem_duration duration, uint8_t precision

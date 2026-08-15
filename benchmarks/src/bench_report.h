@@ -1,7 +1,7 @@
 #ifndef HOSTMEM_BENCH_REPORT_H
 #define HOSTMEM_BENCH_REPORT_H
 
-#include "hostmem/utils/mono_timer.h"
+#include "hostmem/mono_timer.h"
 
 #include <stdio.h>
 

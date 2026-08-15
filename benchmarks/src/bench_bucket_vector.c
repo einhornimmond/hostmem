@@ -1,8 +1,8 @@
 #include "bench_report.h"
+#include "hostmem/bucket_vector.h"
 #include "hostmem/memory.h"
+#include "hostmem/mono_timer.h"
 #include "hostmem/result.h"
-#include "hostmem/utils/bucket_vector.h"
-#include "hostmem/utils/mono_timer.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,5 +1,5 @@
-#ifndef HOSTMEM_UTILS_MONO_TIMER_H
-#define HOSTMEM_UTILS_MONO_TIMER_H
+#ifndef HOSTMEM_MONO_TIMER_H
+#define HOSTMEM_MONO_TIMER_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,11 +9,8 @@
 extern "C" {
 #endif
 
-/** @defgroup utils Utilities */
-
 /**
  * @defgroup hostmem_mono_timer hostmem_mono_timer
- * @ingroup utils
  * @brief High-resolution monotonic timer for precise time measurements.
  * Provides a simple interface to capture a reference time and measure elapsed time in various units
  * (seconds, milliseconds, microseconds, nanoseconds). Uses platform-specific high-resolution
@@ -131,4 +128,4 @@ int hostmem_mono_timer_string(char *buffer, size_t buffer_size, hostmem_mono_tim
 }
 #endif
 
-#endif // HOSTMEM_UTILS_MONO_TIMER_H
+#endif // HOSTMEM_MONO_TIMER_H

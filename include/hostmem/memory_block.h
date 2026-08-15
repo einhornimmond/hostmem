@@ -1,18 +1,17 @@
-#ifndef HOSTMEM_UTILS_MEMORY_BLOCK_H
-#define HOSTMEM_UTILS_MEMORY_BLOCK_H
+#ifndef HOSTMEM_MEMORY_BLOCK_H
+#define HOSTMEM_MEMORY_BLOCK_H
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../memory.h"
-#include "../result.h"
+#include "hostmem/memory.h"
+#include "hostmem/result.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /** @defgroup hostmem_memory_block hostmem_memory_block
- *  @ingroup utils
  *  @brief A pointer and its size, kept together.
  *
  *  @ref hostmem keeps no per allocation bookkeeping, so hostmem_free() and hostmem_realloc()
@@ -160,4 +159,4 @@ static inline hostmem_result hostmem_memory_block_clone(
 }
 #endif
 
-#endif // HOSTMEM_UTILS_MEMORY_BLOCK_H
+#endif // HOSTMEM_MEMORY_BLOCK_H

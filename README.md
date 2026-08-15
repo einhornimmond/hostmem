@@ -9,7 +9,7 @@ its own: you hand it a blob, it works inside that blob, and it gives the blob ba
 
 ```c
 #include "hostmem/memory.h"
-#include "hostmem/utils/bucket_vector.h"
+#include "hostmem/bucket_vector.h"
 
 uint8_t blob[64 * 1024];          // wherever this comes from: the host decides
 hostmem mem;
@@ -32,11 +32,11 @@ up.
 | Header | What it gives you |
 |---|---|
 | `hostmem/memory.h` | bump arena or malloc/free, chosen per call by what you pass |
-| `hostmem/utils/memory_block.h` | pointer and size kept together, so freeing needs no bookkeeping from you |
-| `hostmem/utils/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
-| `hostmem/utils/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
-| `hostmem/utils/duration.h` | nanoseconds to a readable span |
-| `hostmem/utils/mono_timer.h` | monotonic clock, one type, three units |
+| `hostmem/memory_block.h` | pointer and size kept together, so freeing needs no bookkeeping from you |
+| `hostmem/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
+| `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
+| `hostmem/duration.h` | nanoseconds to a readable span |
+| `hostmem/mono_timer.h` | monotonic clock, one type, three units |
 | `hostmem/result.h` | one result code for everything, with a range reserved for you |
 
 ## The contract
