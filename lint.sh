@@ -1,6 +1,6 @@
 #!/bin/bash
 # Formatting, plus the two checks that keep this library embeddable.
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")"
 
 # find, not a ladder of */**/ globs: bash expands ** like a single * unless globstar is set,
