@@ -56,6 +56,12 @@ extern "C" {
  * therefore stay until the arena's own reset. HOSTMEM_SUCCESS either way — a partial reclaim
  * strands nothing that was not already stranded.
  *
+ * @note What the arena keeps, the vector keeps whole: a block that did not come back holds on
+ * to its address and to the size it was allocated with. A refusal is a matter of timing, not
+ * of ownership — once the allocations above it are gone, the next `_shrink` hands the same
+ * blocks over. Recording a smaller size instead would tell the allocator the wrong number and
+ * strand the block for the rest of the arena's life.
+ *
  * ### Empty states
  *
  * A vector is empty after `_init`, `_clear`, `_free` — and when zero-initialized: `name v =
@@ -194,14 +200,15 @@ bool hostmem_bvec_index_grow(
  * @brief Release an index array, counted in slots like the calls that created it.
  *
  * The counterpart of hostmem_bvec_index_grow(): both take slot counts, so the conversion to
- * bytes stays in one place. An arena may keep the block; nothing here depends on which
- * happened, the caller drops the pointer either way.
+ * bytes stays in one place. An arena may keep the block, and the caller has to know: a block
+ * that did not come back keeps its address and its allocated size.
  *
  * @param[in]     index     Index array to release; may be NULL.
  * @param[in]     capacity  Slots @p index was allocated with, not the used count.
  * @param[in,out] allocator Allocator the block came from, or NULL for free().
+ * @return true when the block really came back, false when an arena kept it.
  */
-void hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator);
+bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator);
 
 /**
  * @brief Generate the container type and the function prototypes.
@@ -331,9 +338,13 @@ void hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     }                                                                                              \
     v->bucket_count = i;                                                                           \
     if (!i) {                                                                                      \
-      hostmem_bvec_index_free((void **)v->buckets, v->bucket_capacity, v->allocator);              \
-      v->buckets = NULL;                                                                           \
-      v->bucket_capacity = 0;                                                                      \
+      /* the index array leaves the descriptor only when it really came back; a refusal  */        \
+      /* keeps address and allocated size, so a later _shrink can hand it back instead   */        \
+      /* of stranding it                                                                 */        \
+      if (hostmem_bvec_index_free((void **)v->buckets, v->bucket_capacity, v->allocator)) {        \
+        v->buckets = NULL;                                                                         \
+        v->bucket_capacity = 0;                                                                    \
+      }                                                                                            \
       return HOSTMEM_SUCCESS;                                                                      \
     }                                                                                              \
     if (i == v->bucket_capacity) return HOSTMEM_SUCCESS;                                           \

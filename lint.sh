@@ -3,14 +3,12 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-clang-format -i src/*.c
-clang-format -i src/**/*.c
-clang-format -i include/**/*.h
-clang-format -i include/**/**/*.h
-clang-format -i tests/unit/src/*.cpp
-clang-format -i tests/unit/src/*.h
-clang-format -i benchmarks/src/*.c
-clang-format -i benchmarks/src/*.h
+# find, not a ladder of */**/ globs: bash expands ** like a single * unless globstar is set,
+# so such a ladder reaches a fixed depth and silently skips whatever sits below it. That is
+# fine until someone adds a directory level, and then it is wrong without saying so.
+find src include tests/unit/src benchmarks/src \
+  \( -name "*.c" -o -name "*.h" -o -name "*.cpp" \) \
+  -print0 | xargs -0 clang-format -i
 
 status=0
 

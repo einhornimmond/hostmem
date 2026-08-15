@@ -21,6 +21,11 @@ zig build -Dtarget=x86_64-linux-gnu -Dtests=true -Dbenchmarks=true
 ./lint.sh                    # format + the two structural checks below
 ```
 
+`lint.sh` walks `src/`, `include/`, `tests/unit/src/` and `benchmarks/src/` with `find`, so it
+covers `.c`, `.h` and `.cpp` at any depth. Do not replace that with a ladder of `src/**/*.c`
+patterns: bash expands `**` like a single `*` unless `globstar` is set, so such a ladder stops
+at a fixed depth and skips anything below it without a word.
+
 | Option | Meaning |
 |---|---|
 | `-Dtarget=` | required, e.g. `x86_64-linux-gnu`, `x86_64-linux-musl`, `x86_64-windows-gnu`, `aarch64-macos` |

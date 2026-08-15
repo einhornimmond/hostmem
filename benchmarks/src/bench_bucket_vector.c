@@ -1,8 +1,10 @@
 #include "bench_report.h"
 #include "hostmem/memory.h"
+#include "hostmem/result.h"
 #include "hostmem/utils/bucket_vector.h"
 #include "hostmem/utils/mono_timer.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,6 +41,19 @@ static hostmem g_arena;
 /** Consumes every value read so the compiler cannot drop the traversal steps. */
 static volatile uint64_t g_sink = 0;
 
+/**
+ * Stop on a failed setup instead of measuring the wreckage.
+ *
+ * A reserve that fails leaves the vector empty, and the pushes that follow fail with it —
+ * the step would finish suspiciously fast and be reported as a result. Checked once per step,
+ * never inside a measured loop, so the timing stays untouched.
+ */
+static void require_ok(hostmem_result result, const char *what) {
+  if (HOSTMEM_SUCCESS == result) { return; }
+  fprintf(stderr, "benchmark setup failed: %s: %s\n", what, hostmem_result_to_string(result));
+  exit(EXIT_FAILURE);
+}
+
 /* --- append ----------------------------------------------------------------------------- */
 
 static void test_bvec_push(int stepCount) {
@@ -51,7 +66,7 @@ static void test_bvec_push(int stepCount) {
 static void test_bvec_push_reserved(int stepCount) {
   bvec_u64 v;
   bvec_u64_init(&v, NULL);
-  bvec_u64_reserve(&v, (uint32_t)stepCount);
+  require_ok(bvec_u64_reserve(&v, (uint32_t)stepCount), "reserve");
   for (int i = 0; i < stepCount; ++i) bvec_u64_push(&v, (uint64_t)i);
   bvec_u64_free(&v);
 }
@@ -60,7 +75,7 @@ static void test_bvec_push_arena(int stepCount) {
   bvec_u64 v;
   hostmem_reset(&g_arena);
   bvec_u64_init(&v, &g_arena);
-  bvec_u64_reserve(&v, (uint32_t)stepCount);
+  require_ok(bvec_u64_reserve(&v, (uint32_t)stepCount), "reserve");
   for (int i = 0; i < stepCount; ++i) bvec_u64_push(&v, (uint64_t)i);
   bvec_u64_free(&v);
 }
@@ -109,7 +124,7 @@ static void test_payload_push_by_value(int stepCount) {
   bvec_payload v;
   bench_payload p;
   bvec_payload_init(&v, NULL);
-  bvec_payload_reserve(&v, (uint32_t)stepCount);
+  require_ok(bvec_payload_reserve(&v, (uint32_t)stepCount), "reserve payload");
   memset(&p, 0, sizeof(p));
   for (int i = 0; i < stepCount; ++i) {
     p.id = (uint64_t)i;
@@ -123,7 +138,7 @@ static void test_payload_emplace(int stepCount) {
   bvec_payload v;
   bench_payload *slot;
   bvec_payload_init(&v, NULL);
-  bvec_payload_reserve(&v, (uint32_t)stepCount);
+  require_ok(bvec_payload_reserve(&v, (uint32_t)stepCount), "reserve payload");
   for (int i = 0; i < stepCount; ++i) {
     if (bvec_payload_emplace(&v, &slot) != HOSTMEM_SUCCESS) break;
     memset(slot, 0, sizeof(*slot));
@@ -194,7 +209,7 @@ static void test_flat_random_access(int stepCount) {
 static void test_bvec_push_pop_cycle(int stepCount) {
   bvec_u64 v;
   bvec_u64_init(&v, NULL);
-  bvec_u64_reserve(&v, (uint32_t)stepCount);
+  require_ok(bvec_u64_reserve(&v, (uint32_t)stepCount), "reserve");
   for (int i = 0; i < stepCount; ++i) bvec_u64_push(&v, (uint64_t)i);
   for (int i = 0; i < stepCount; ++i) bvec_u64_pop(&v);
   bvec_u64_free(&v);
@@ -204,18 +219,24 @@ static void test_bvec_push_pop_cycle(int stepCount) {
 
 static void prepare_test_data(void) {
   g_flat = (uint64_t *)malloc((size_t)ELEMENT_COUNT * sizeof(uint64_t));
+  if (!g_flat) { require_ok(HOSTMEM_ERROR_OUT_OF_MEMORY, "flat reference array"); }
   bvec_u64_init(&g_filled, NULL);
-  bvec_u64_reserve(&g_filled, (uint32_t)ELEMENT_COUNT);
+  require_ok(bvec_u64_reserve(&g_filled, (uint32_t)ELEMENT_COUNT), "reserve filled");
   for (int i = 0; i < ELEMENT_COUNT; ++i) {
     bvec_u64_push(&g_filled, (uint64_t)i);
     g_flat[i] = (uint64_t)i;
   }
   /* filled once, then cleared: the refill step finds every bucket already in place */
   bvec_u64_init(&g_reused, NULL);
-  bvec_u64_reserve(&g_reused, (uint32_t)ELEMENT_COUNT);
+  require_ok(bvec_u64_reserve(&g_reused, (uint32_t)ELEMENT_COUNT), "reserve reused");
   bvec_u64_clear(&g_reused);
   /* payload for the index array included, so no step runs the arena dry */
-  hostmem_init_arena(&g_arena, (uint32_t)ELEMENT_COUNT * sizeof(uint64_t) + 1024 * 1024);
+  /* Without this a failed init would leave g_arena zeroed, which is default mode: the
+     arena steps would quietly measure malloc and still be labelled "arena". */
+  require_ok(
+      hostmem_init_arena(&g_arena, (uint32_t)ELEMENT_COUNT * sizeof(uint64_t) + 1024 * 1024),
+      "init arena"
+  );
 }
 
 static void release_test_data(void) {

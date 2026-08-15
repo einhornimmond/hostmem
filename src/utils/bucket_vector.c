@@ -43,9 +43,13 @@ bool hostmem_bvec_index_grow(
   hostmem_result result = hostmem_realloc(
       (uint8_t **)index, index_bytes(old_capacity), index_bytes(new_capacity), allocator
   );
-  return HOSTMEM_SUCCESS == result || HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED == result;
+  if (HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED == result) {
+    if (new_capacity > old_capacity) { return true; }
+    return false;
+  }
+  return HOSTMEM_SUCCESS == result;
 }
 
-void hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator) {
-  hostmem_bvec_raw_free(index, index_bytes(capacity), allocator);
+bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator) {
+  return hostmem_bvec_raw_free(index, index_bytes(capacity), allocator);
 }

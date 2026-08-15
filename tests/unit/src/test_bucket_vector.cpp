@@ -4,6 +4,7 @@
 
 #include "memory_limit.h"
 #include <array>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -570,6 +571,104 @@ TEST(BucketVectorShrink, ArenaTailBucketsComeBack) {
 
   EXPECT_EQ(u32_vec_size(&v), 20u);
   for (uint32_t i = 0; i < 20; ++i) ASSERT_EQ(*u32_vec_at(&v, i), i);
+  u32_vec_free(&v);
+  hostmem_release(&arena);
+}
+
+TEST(BucketVectorShrink, RefusedTighteningKeepsPointerAndSize) {
+  // A shrink the arena will not honour must change nothing at all. The recorded capacity is
+  // the size the index array was allocated with, and it is what every later free and resize
+  // has to be told — a capacity that drifts below the real one strands the block for good.
+  alignas(8) uint8_t storage[8192];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+
+  u32_vec v;
+  ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
+  for (uint32_t i = 0; i < 200; ++i) ASSERT_EQ(u32_vec_push(&v, i), HOSTMEM_SUCCESS);
+
+  uint32_t **index_before = v.buckets;
+  const uint32_t capacity_before = v.bucket_capacity;
+  const uint32_t buckets_before = v.bucket_count;
+
+  // someone else takes the tail, so nothing the vector holds is the arena's last allocation
+  uint8_t *blocker = nullptr;
+  ASSERT_EQ(hostmem_alloc(&blocker, 64, &arena), HOSTMEM_SUCCESS);
+  const uint32_t arena_with_blocker = arena.last_index;
+
+  for (uint32_t i = 0; i < 190; ++i) ASSERT_EQ(u32_vec_pop(&v), HOSTMEM_SUCCESS);
+  EXPECT_EQ(u32_vec_shrink(&v), HOSTMEM_SUCCESS);
+
+  // nothing came back, so nothing may have moved
+  EXPECT_EQ(v.buckets, index_before);
+  EXPECT_EQ(v.bucket_capacity, capacity_before);
+  EXPECT_EQ(v.bucket_count, buckets_before);
+  EXPECT_EQ(arena.last_index, arena_with_blocker);
+  EXPECT_EQ(u32_vec_size(&v), 10u);
+  for (uint32_t i = 0; i < 10; ++i) ASSERT_EQ(*u32_vec_at(&v, i), i);
+  ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
+
+  u32_vec_free(&v);
+  hostmem_release(&arena);
+}
+
+TEST(BucketVectorShrink, WhatTheArenaRefusedComesBackLater) {
+  // The refusal is a matter of timing, not of ownership: once the block above is gone the
+  // same buckets are reclaimable, and a second _shrink has to hand them over.
+  alignas(8) uint8_t storage[8192];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+
+  u32_vec v;
+  ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
+  for (uint32_t i = 0; i < 200; ++i) ASSERT_EQ(u32_vec_push(&v, i), HOSTMEM_SUCCESS);
+
+  uint8_t *blocker = nullptr;
+  ASSERT_EQ(hostmem_alloc(&blocker, 64, &arena), HOSTMEM_SUCCESS);
+  for (uint32_t i = 0; i < 190; ++i) ASSERT_EQ(u32_vec_pop(&v), HOSTMEM_SUCCESS);
+
+  EXPECT_EQ(u32_vec_shrink(&v), HOSTMEM_SUCCESS);
+  const uint32_t buckets_refused = v.bucket_count;
+
+  // the blocker goes, the tail is the vector's again
+  ASSERT_EQ(hostmem_free(blocker, 64, &arena), HOSTMEM_SUCCESS);
+  const uint32_t arena_before_retry = arena.last_index;
+
+  EXPECT_EQ(u32_vec_shrink(&v), HOSTMEM_SUCCESS);
+  EXPECT_LT(v.bucket_count, buckets_refused);
+  EXPECT_LT(arena.last_index, arena_before_retry);
+
+  EXPECT_EQ(u32_vec_size(&v), 10u);
+  for (uint32_t i = 0; i < 10; ++i) ASSERT_EQ(*u32_vec_at(&v, i), i);
+  ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
+
+  // and it still grows from there
+  for (uint32_t i = 10; i < 200; ++i) ASSERT_EQ(u32_vec_push(&v, i), HOSTMEM_SUCCESS);
+  for (uint32_t i = 0; i < 200; ++i) ASSERT_EQ(*u32_vec_at(&v, i), i);
+  u32_vec_free(&v);
+  hostmem_release(&arena);
+}
+
+TEST(BucketVectorShrink, BuriedGrowthRecordsTheNewBlock) {
+  // The other half of the warning: a buried index array cannot grow in place, so the arena
+  // hands out a fresh block and copies. The resize did happen — the descriptor has to follow
+  // the new address and the new capacity, or every bucket pointer is read from stale memory.
+  alignas(8) uint8_t storage[8192];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+
+  u32_vec v;
+  ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
+  // one bucket forces the first index array; from here every growth is buried behind buckets
+  ASSERT_EQ(u32_vec_push(&v, 0u), HOSTMEM_SUCCESS);
+  uint32_t **first_index = v.buckets;
+
+  for (uint32_t i = 1; i < 200; ++i) ASSERT_EQ(u32_vec_push(&v, i), HOSTMEM_SUCCESS);
+  EXPECT_NE(v.buckets, first_index) << "the index array must have moved at least once";
+  EXPECT_GE(v.bucket_capacity, v.bucket_count);
+  for (uint32_t i = 0; i < 200; ++i) ASSERT_EQ(*u32_vec_at(&v, i), i);
+  ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
+
   u32_vec_free(&v);
   hostmem_release(&arena);
 }
@@ -1245,7 +1344,7 @@ TEST(BucketVectorPerformance, Append) {
       n
   );
 
-  std::printf("\nappend %u elements (uint64, fill + sum)\n", n);
+  std::printf("\nappend %" PRIu32 " elements (uint64, fill + sum)\n", n);
   PrintTiming("hostmem bucket vector push", ns_bvec);
   PrintTiming("hostmem bucket vector push, reserved", ns_bvec_reserved);
   PrintTiming("hostmem bucket vector emplace", ns_emplace);
@@ -1339,7 +1438,7 @@ TEST(BucketVectorPerformance, AppendIntoWarmStorage) {
       n
   );
 
-  std::printf("\nappend %u elements into storage already owned (fill + sum)\n", n);
+  std::printf("\nappend %" PRIu32 " elements into storage already owned (fill + sum)\n", n);
   PrintTiming("hostmem bucket vector push", ns_bvec);
   PrintTiming("hostmem bucket vector push, arena", ns_arena);
   PrintTiming("std::vector push_back", ns_vector);
@@ -1420,7 +1519,7 @@ TEST(BucketVectorPerformance, SequentialRead) {
       n
   );
 
-  std::printf("\nsequential read of %u elements\n", n);
+  std::printf("\nsequential read of %" PRIu32 " elements\n", n);
   PrintTiming("hostmem bucket vector, bucket wise", ns_buckets);
   PrintTiming("hostmem bucket vector, arena, bucket wise", ns_arena);
   PrintTiming("hostmem bucket vector, FOREACH", ns_foreach);
@@ -1527,7 +1626,7 @@ TEST(BucketVectorPerformance, RandomAccess) {
       n
   );
 
-  std::printf("\nrandom access, %u scattered reads\n", n);
+  std::printf("\nrandom access, %" PRIu32 " scattered reads\n", n);
   PrintTiming("hostmem bucket vector _get", ns_bvec);
   PrintTiming("hostmem bucket vector _get, arena", ns_arena);
   PrintTiming("std::vector operator[]", ns_vector);
@@ -1641,7 +1740,9 @@ TEST(BucketVectorPerformance, AppendLargePayload) {
       n
   );
 
-  std::printf("\nappend %u elements of %zu byte payload (fill + sum)\n", n, sizeof(payload));
+  std::printf(
+      "\nappend %" PRIu32 " elements of %zu byte payload (fill + sum)\n", n, sizeof(payload)
+  );
   PrintTiming("hostmem bucket vector emplace", ns_emplace);
   PrintTiming("hostmem bucket vector emplace, arena", ns_arena);
   PrintTiming("hostmem bucket vector push by value", ns_push);
