@@ -33,6 +33,7 @@ up.
 |---|---|
 | `hostmem/memory.h` | bump arena or malloc/free, chosen per call by what you pass |
 | `hostmem/memory_block.h` | pointer and size kept together, so freeing needs no bookkeeping from you |
+| `hostmem/multi_arena.h` | a chain of arenas that opens another one instead of running dry |
 | `hostmem/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
 | `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
 | `hostmem/duration.h` | nanoseconds to a readable span |
@@ -51,6 +52,31 @@ up.
   `HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED` — the operation happened, the memory did not
   come back. It is neither a failure nor a release; handle it where it appears.
 - **Failures leave every output untouched.**
+
+## When one arena is not enough
+
+An arena has the capacity it was born with. `hostmem_multi_arena` keeps a chain of them and
+opens the next one when the current stretch fills, so the size never has to be guessed right up
+front — and a request larger than the arena capacity gets ground of its own instead of a
+refusal.
+
+```c
+#include "hostmem/multi_arena.h"
+
+hostmem_multi_arena chain;
+hostmem_multi_arena_init(&chain, 1024 * 1024, NULL);   // 1 MiB per arena, 0 for the default
+hostmem_multi_arena_adopt(&chain, blob, sizeof(blob)); // optional: fill the host's blob first
+
+uint8_t *buffer = NULL;
+hostmem_multi_arena_alloc(&buffer, 4096, &chain);
+
+hostmem_multi_arena_reset(&chain);    // every allocation, in one move; the arenas stay
+hostmem_multi_arena_shrink(&chain);   // and give the empty ones back to the host
+hostmem_multi_arena_release(&chain);
+```
+
+Pointers stay put: an arena, once opened, is never moved or resized. Adopted blocks are
+borrowed, never freed. `NULL` is not a malloc fallback here — a chain has to exist.
 
 ## Build
 
