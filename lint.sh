@@ -19,9 +19,24 @@ status=0
 #
 # The three characters this codebase used to reach for have plain stand-ins that read the same
 # in a fixed width font: an em dash is --, an ellipsis is ..., a multiplication sign is x.
+#
+# perl and not `grep -P`: PCRE is an optional grep feature and absent from the BSD grep macOS
+# ships, where the check would have exited 2 and, swallowed by a `|| true`, reported a clean
+# file it never read. perl is a hard dependency of this script anyway (see the malloc check
+# below) and separates the two outcomes by different signals: output means findings, a non-zero
+# exit means the file was not examined. Both fail the lint -- a rule that cannot run is not a
+# rule that passed.
+#
+# The open is spelled out rather than left to `perl -ne`, whose implicit loop only warns about a
+# file it cannot read and still exits 0 -- the very hole this check is here to close.
 while IFS= read -r -d '' f; do
-  hits=$(grep -nP '[^\x00-\x7F]' "$f" || true)
-  if [ -n "$hits" ]; then
+  rc=0
+  hits=$(perl -e 'open(my $fh, "<", $ARGV[0]) or die "$!\n";
+                  while (<$fh>) { print "$.: $_" if /[^\x00-\x7F]/ }' "$f") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "could not scan for non-ASCII bytes (perl exit $rc): $f" >&2
+    status=1
+  elif [ -n "$hits" ]; then
     echo "non-ASCII bytes (use -- for an em dash, ... for an ellipsis, x for a times sign): $f" >&2
     echo "$hits" | sed 's/^/  /' >&2
     status=1
@@ -44,13 +59,30 @@ for h in $(find include -name "*.h" | sort); do
 done
 
 # malloc lives in exactly one place. Everywhere else the caller's blob is the only source of
-# memory, and a stray allocation would break that promise silently. Comments and string
-# literals are blanked out first -- the documentation mentions free() often and rightly so.
+# memory, and a stray allocation would break that promise silently. Comments are blanked out
+# first -- the documentation mentions free() often and rightly so. String literals are matched
+# but kept, so a `free(` inside one would be reported; none exists, and a rule that errs toward
+# asking is the right way round here.
 for f in $(find src include -name "*.c" -o -name "*.h" | grep -v "^src/memory.c$"); do
-  hits=$(perl -0777 -pe 's{("(?:\\.|[^"\\])*")|(/\*.*?\*/)|(//[^\n]*)}
-                         {$1 ? $1 : ($2 ? ($2 =~ s/[^\n]/ /gr) : "")}gsex' "$f" \
-         | grep -nE "\b(malloc|calloc|realloc|free)\s*\(" || true)
-  if [ -n "$hits" ]; then
+  # Same care as the ASCII check above: grep answers 1 for "nothing found" and 2 for "I could
+  # not look", and a bare `|| true` would report the second as the first. Only 1 is the clean
+  # no-match; anything else means this file went unchecked and the lint has to say so.
+  rc=0
+  stripped=$(perl -e 'open(my $fh, "<", $ARGV[0]) or die "$!\n";
+                      local $/; my $s = <$fh>;
+                      $s =~ s{("(?:\\.|[^"\\])*")|(/\*.*?\*/)|(//[^\n]*)}
+                             {$1 ? $1 : ($2 ? ($2 =~ s/[^\n]/ /gr) : "")}gsex;
+                      print $s' "$f") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "could not strip comments before the allocation check (perl exit $rc): $f" >&2
+    status=1
+    continue
+  fi
+  hits=$(printf '%s' "$stripped" | grep -nE "\b(malloc|calloc|realloc|free)\s*\(") || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "could not scan for allocations (grep exit $rc): $f" >&2
+    status=1
+  elif [ -n "$hits" ]; then
     echo "allocation outside src/memory.c: $f" >&2
     echo "$hits" | sed 's/^/  /' >&2
     status=1

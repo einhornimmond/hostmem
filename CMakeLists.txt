@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.18.2)
 cmake_policy(VERSION 3.18.2)
-cmake_policy(SET CMP0135 NEW)
+
+# CMP0135 makes FetchContent stamp extracted archives with the extraction time instead of the
+# timestamps inside the tarball, which is what keeps the googletest download in tests/ from
+# looking older than the build that unpacked it. It only exists from CMake 3.24 on, and setting
+# an unknown policy is a hard error -- so it is asked for rather than assumed, and the versions
+# between the declared 3.18.2 minimum and 3.24 simply configure without it.
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
 
 # build.zig is the master build of this project -- it defines the targets, the options and the
 # matrix that gets verified. This file exists for the one case zig cannot serve: the MSVC ABI
@@ -14,6 +22,10 @@ cmake_policy(SET CMP0135 NEW)
 set(PROJECT_NAME hostmem)
 project(${PROJECT_NAME} C)
 
+# CMake only learned to pass /std:c11 to MSVC in 3.20; older versions accept these lines and
+# quietly hand MSVC its default C mode instead. That is not worth raising the minimum over --
+# MSVC itself needs VS 2019 16.8 for C11, which ships with a newer CMake anyway -- but if a
+# Windows build fails on C11 syntax, check the CMake version before the source.
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
