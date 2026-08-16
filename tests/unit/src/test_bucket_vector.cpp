@@ -336,8 +336,11 @@ TEST(BucketVectorZeroInit, ZeroedDescriptorAnswersEveryReadPath) {
   EXPECT_EQ(u32_vec_at(&v, 0), nullptr);
   EXPECT_EQ(u32_vec_at(&v, 12345), nullptr);
   EXPECT_EQ(u32_vec_pop(&v), HOSTMEM_ERROR_ARRAY_INDEX_OUT_OF_BOUNDS);
-  uint32_t sink = 0;
-  EXPECT_EQ(u32_vec_copy_to(&v, &sink, 1), HOSTMEM_SUCCESS); // nothing to copy, no read of buckets
+  // capacity 1 is what is under test — an empty vector fits any destination. The array behind
+  // it is a whole bucket wide only so that gcc, which inlines _copy_to and reasons about the
+  // loop body it can never reach here, has nothing to warn about.
+  uint32_t sink[u32_vec_BUCKET_CAPACITY] = {0};
+  EXPECT_EQ(u32_vec_copy_to(&v, sink, 1), HOSTMEM_SUCCESS); // nothing to copy, no read of buckets
   ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
 
   // the first push has to open the first bucket instead of writing through the null tail

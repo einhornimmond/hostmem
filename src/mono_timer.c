@@ -22,11 +22,23 @@ static int64_t get_time_ns() {
     fprintf(stderr, "Error: QueryPerformanceCounter failed\n");
     exit(1);
   }
-  // The counter is scaled to nanoseconds in 128 bit, so a machine that has been up for a
-  // while cannot overflow the multiplication. The build is zig only and therefore always
-  // clang, which carries __int128 on every target — no fixed point fallback is needed.
-  __int128 tmp = (__int128)counter.QuadPart * 1000000000LL;
-  return (int64_t)(tmp / (int64_t)freq.QuadPart);
+  // Scaling to nanoseconds means counter * 1e9 / freq, and the product overflows int64 after
+  // a few seconds of uptime. Splitting the counter into whole seconds and the remainder keeps
+  // every intermediate inside 64 bit and yields the identical value: with c = q*f + r,
+  // (c * 1e9) / f == q * 1e9 + (r * 1e9) / f, exactly, for integer division.
+  //
+  // Done this way rather than in __int128 because MSVC has no such type and the CMake build
+  // exists for exactly that compiler. One path for every toolchain also means the Windows
+  // arithmetic is the arithmetic every Windows build exercises, not an untested fallback.
+  //
+  // Neither half can overflow in practice: r < freq, and QueryPerformanceFrequency reports
+  // 10 MHz on current Windows, so r * 1e9 stays sixteen digits short of INT64_MAX; q counts
+  // seconds since boot, which reaches INT64_MAX / 1e9 after some 292 years.
+  const int64_t ticks = (int64_t)counter.QuadPart;
+  const int64_t ticks_per_second = (int64_t)freq.QuadPart;
+  const int64_t whole_seconds = ticks / ticks_per_second;
+  const int64_t leftover_ticks = ticks % ticks_per_second;
+  return whole_seconds * 1000000000LL + (leftover_ticks * 1000000000LL) / ticks_per_second;
 }
 
 #else

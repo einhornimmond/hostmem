@@ -81,7 +81,7 @@ if [ -z "$DIR" ]; then
 fi
 if [ -z "$DIR" ] || [ ! -d "$DIR" ]; then
   echo "no build output found — looked for zig-out/bin" >&2
-  echo "build first, e.g.: zig build -Dtarget=x86_64-linux-gnu -Dtests=true -Dbenchmarks=true" >&2
+  echo "build first, e.g.: zig build -Dtests=true -Dbenchmarks=true" >&2
   exit 1
 fi
 
