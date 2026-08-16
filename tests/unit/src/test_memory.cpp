@@ -10,6 +10,39 @@
 // The arena rounds every size up to a multiple of 8, so a request of `n` moves the
 // bump index by HOSTMEM_ALIGN8(n). Tests that check `last_index` state that explicitly.
 
+TEST(MemoryTest, AFailedAllocLeavesTheOutputPointerAlone) {
+  // "Failures leave every output untouched" has to hold in both modes, and the malloc path is
+  // the one where it is easy to lose: assigning malloc's result straight into *buffer writes a
+  // NULL over whatever the caller held. Seeded with a real address, so a written NULL shows up.
+  uint8_t marker = 0;
+  uint8_t *buffer = &marker;
+
+  // arena mode: refused before the arena is even asked
+  alignas(8) uint8_t storage[64];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_alloc(&buffer, 0, &arena), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(buffer, &marker);
+  EXPECT_EQ(
+      hostmem_alloc(&buffer, HOSTMEM_MAX_ALLOC_SIZE + 1, &arena), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
+  );
+  EXPECT_EQ(buffer, &marker);
+  EXPECT_EQ(hostmem_alloc(&buffer, 128, &arena), HOSTMEM_ERROR_OUT_OF_MEMORY);
+  EXPECT_EQ(buffer, &marker);
+
+  // default mode: the same promise, and here the allocation really is attempted. A size no host
+  // can serve rather than a rigged malloc — the point is only what happens to *buffer.
+  EXPECT_EQ(hostmem_alloc(&buffer, 0, nullptr), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(buffer, &marker);
+  EXPECT_EQ(hostmem_alloc(&buffer, HOSTMEM_MAX_ALLOC_SIZE, nullptr), HOSTMEM_ERROR_OUT_OF_MEMORY);
+  EXPECT_EQ(buffer, &marker);
+
+  // and a call that succeeds does replace it, so the check above is not passing by accident
+  ASSERT_EQ(hostmem_alloc(&buffer, 32, &arena), HOSTMEM_SUCCESS);
+  EXPECT_NE(buffer, &marker);
+  hostmem_release(&arena);
+}
+
 TEST(MemoryTest, Align8RoundsUpAndRefusesToWrap) {
   uint32_t aligned = 0xDEADBEEF;
 
@@ -92,7 +125,7 @@ TEST(MemoryTest, InitArenaRejectsBadArguments) {
   EXPECT_EQ(hostmem_init_arena(&mem, UINT32_MAX), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW);
 }
 
-TEST(MemoryTest, InitArenaStaticRejectsWhatItCannotHonour) {
+TEST(MemoryTest, InitArenaBorrowRejectsWhatItCannotHonour) {
   alignas(8) uint8_t storage[64];
   hostmem mem{};
 
@@ -124,7 +157,7 @@ TEST(MemoryTest, InitArenaStaticRejectsWhatItCannotHonour) {
   EXPECT_EQ(storage[0], 0x42);
 }
 
-TEST(MemoryTest, InitArenaStaticCanBeRepeatedWithoutFreeing) {
+TEST(MemoryTest, InitArenaBorrowCanBeRepeatedWithoutFreeing) {
   // nothing is owned, so switching external buffers is just another init
   alignas(8) uint8_t first[64];
   alignas(8) uint8_t second[128];

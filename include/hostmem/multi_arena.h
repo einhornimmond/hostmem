@@ -161,7 +161,9 @@ typedef struct hostmem_multi_arena_stats {
  *                               still place in a leftover — see the module text on what moving
  *                               it in either direction costs.
  * @param[in]     bookkeeping    Allocator for the descriptor vector, or NULL for malloc/free.
- *                               The arenas themselves are always owned heap blocks.
+ *                               It never provides arena storage. An arena the chain opens for
+ *                               itself is an owned heap block; one handed to
+ *                               hostmem_multi_arena_borrow() stays the caller's throughout.
  * @retval HOSTMEM_SUCCESS                  Chain ready, no arena open.
  * @retval HOSTMEM_ERROR_NULL_POINTER       @p m is NULL.
  * @retval HOSTMEM_ERROR_ARITHMETIC_OVERFLOW Rounding @p arena_capacity up to 8 would wrap.

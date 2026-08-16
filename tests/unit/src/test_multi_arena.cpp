@@ -232,9 +232,10 @@ TEST(MultiArena, ZeroSelectsTheDefaultThreshold) {
 
 TEST(MultiArena, NullAllocatorIsNotAFallback) {
   // hostmem reads a NULL allocator as malloc/free; a NULL chain is a mistake
-  uint8_t *buffer = nullptr;
+  uint8_t marker = 0;
+  uint8_t *buffer = &marker; // seeded, so "untouched" is distinguishable from "set to NULL"
   EXPECT_EQ(hostmem_multi_arena_alloc(&buffer, 8, nullptr), HOSTMEM_ERROR_NULL_POINTER);
-  EXPECT_EQ(buffer, nullptr);
+  EXPECT_EQ(buffer, &marker);
   EXPECT_EQ(hostmem_multi_arena_free(nullptr, 8, nullptr), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_reserve(nullptr, 4), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_shrink(nullptr), HOSTMEM_ERROR_NULL_POINTER);
@@ -266,13 +267,16 @@ TEST(MultiArena, AllocRejectsBadArguments) {
   hostmem_multi_arena m;
   ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
-  uint8_t *buffer = nullptr;
+  // seeded, so "untouched" is distinguishable from "set to NULL", and checked after each
+  uint8_t marker = 0;
+  uint8_t *buffer = &marker;
   EXPECT_EQ(hostmem_multi_arena_alloc(nullptr, 8, &m), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_alloc(&buffer, 0, &m), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(buffer, &marker);
   EXPECT_EQ(hostmem_multi_arena_alloc(&buffer, UINT32_MAX, &m), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW);
+  EXPECT_EQ(buffer, &marker);
   // nothing was opened on the way
   EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 0u);
-  EXPECT_EQ(buffer, nullptr);
 
   hostmem_multi_arena_release(&m);
 }

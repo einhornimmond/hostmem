@@ -139,9 +139,12 @@ hostmem_result hostmem_alloc(uint8_t **buffer, uint32_t size, hostmem *memory) {
   if (!buffer) { return HOSTMEM_ERROR_NULL_POINTER; }
   if (!size) { return HOSTMEM_ERROR_INVALID_PARAM; }
   if (!is_arena(memory)) {
-    *buffer = (uint8_t *)malloc(size);
-    if (*buffer) { return HOSTMEM_SUCCESS; }
-    return HOSTMEM_ERROR_OUT_OF_MEMORY;
+    // through a local first: assigning malloc's result straight into *buffer would leave a NULL
+    // behind on failure, and "failures leave every output untouched" has to hold here too
+    uint8_t *allocated = (uint8_t *)malloc(size);
+    if (!allocated) { return HOSTMEM_ERROR_OUT_OF_MEMORY; }
+    *buffer = allocated;
+    return HOSTMEM_SUCCESS;
   }
   // can only be happen, if caller access memory directly and mess with the state
   if (!memory->data) { return HOSTMEM_ERROR_INVALID_STATE; }

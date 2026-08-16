@@ -58,6 +58,13 @@
 /** Allocations in the growth section, where every one of them opens and strands an arena. */
 #define GROWTH_COUNT 4000
 
+/* The two counts as text, so a section heading names its own denominator and cannot drift from
+   the number the steps below it actually run. The closing line has no single count to give. */
+#define BENCH_STRINGIFY_(x) #x
+#define BENCH_STRINGIFY(x) BENCH_STRINGIFY_(x)
+#define BENCH_PROBES BENCH_STRINGIFY(PROBE_COUNT)
+#define BENCH_GROWTH BENCH_STRINGIFY(GROWTH_COUNT)
+
 /* The sizes above only do their job in this order. Settled here rather than discovered as a
    flat line in the report, or as a chain that refuses to init at all. */
 static_assert(STRANDED_REMAINING > FULL_REMAINING, "remainder must stay open");
@@ -266,24 +273,28 @@ int main(void) {
       (unsigned)FULL_REMAINING
   );
 
-  bench_section("first fit past arenas whose remainder is too small");
+  bench_section("first fit past arenas whose remainder is too small — " BENCH_PROBES " allocs");
   bench_step(test_stranded_0, PROBE_COUNT, "  no arena in the way", "alloc");
   bench_step(test_stranded_16, PROBE_COUNT, "  16 stranded arenas", "alloc");
   bench_step(test_stranded_64, PROBE_COUNT, "  64 stranded arenas", "alloc");
   bench_step(test_stranded_256, PROBE_COUNT, "  256 stranded arenas", "alloc");
   bench_step(test_stranded_1024, PROBE_COUNT, "  1024 stranded arenas", "alloc");
 
-  bench_section("the same chains with the arenas run full");
+  bench_section("the same chains with the arenas run full — " BENCH_PROBES " allocs");
   bench_step(test_full_16, PROBE_COUNT, "  16 arenas, marker passes", "alloc");
   bench_step(test_full_64, PROBE_COUNT, "  64 arenas, marker passes", "alloc");
   bench_step(test_full_256, PROBE_COUNT, "  256 arenas, marker passes", "alloc");
   bench_step(test_full_1024, PROBE_COUNT, "  1024 arenas, marker passes", "alloc");
 
-  bench_section("a chain growing under its own allocations, opening and release included");
+  bench_section(
+      "a chain growing under its own allocations, opening and release included — " BENCH_GROWTH
+      " allocs"
+  );
   bench_step(test_growth_stranded, GROWTH_COUNT, "  every alloc strands an arena", "alloc");
   bench_step(test_growth_full, GROWTH_COUNT, "  every alloc fills one to the brim", "alloc");
 
-  bench_total(timeUsed, PROBE_COUNT, "alloc");
+  /* the sections do not share a step count, so the closing line names none */
+  bench_total_time(timeUsed);
 
   release_test_data();
   return 0;

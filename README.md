@@ -8,10 +8,11 @@ constantly and the standard library does slowly. What it does not bring is a mem
 its own: you hand it a blob, it works inside that blob, and it gives the blob back.
 
 ```c
+#include <stdalign.h>
 #include "hostmem/memory.h"
 #include "hostmem/bucket_vector.h"
 
-uint8_t blob[64 * 1024];          // wherever this comes from: the host decides
+alignas(8) uint8_t blob[64 * 1024];   // wherever this comes from: the host decides
 hostmem mem;
 hostmem_init_arena_borrow(&mem, blob, sizeof(blob));
 
@@ -22,6 +23,18 @@ hostmem_free(buffer, 128, &mem);
 
 hostmem_reset(&mem);              // the whole arena, in one move
 ```
+
+A borrowed buffer is taken exactly as it is. Both halves of that line have to hold: `blob` must
+start on an 8 byte boundary, which is what `alignas(8)` is for, and `sizeof(blob)` must be a
+multiple of 8. Neither is rounded — anything else comes back as
+`HOSTMEM_ERROR_INVALID_PARAM` and no arena is set up.
+
+The size is the half that surprises people, because the owned arena does round it:
+`hostmem_init_arena(&mem, 100)` reserves 104 bytes and succeeds, while
+`hostmem_init_arena_borrow(&mem, blob, 100)` is refused. The difference is who owns the memory
+— rounding 100 up to 104 in a buffer you sized at 100 would let the arena hand out four bytes
+past its end, so the size is questioned instead of corrected. Declare the blob at a multiple of
+8 rather than trimming the call. `hostmem_multi_arena_borrow()` borrows under the same rule.
 
 Pass `NULL` instead of an allocator and every call falls back to malloc/free. That is the only
 place in the library where `malloc` appears — `lint.sh` fails the build if a second one shows
@@ -67,7 +80,8 @@ hostmem_multi_arena chain;
 // 1 MiB per arena, and an arena drops out of the search once under 4 KiB is left.
 // 0 for either takes the default: 1 MiB and 128 bytes.
 hostmem_multi_arena_init(&chain, 1024 * 1024, 4096, NULL);
-hostmem_multi_arena_borrow(&chain, blob, sizeof(blob)); // optional: lend it the host's blob
+hostmem_multi_arena_borrow(&chain, blob, sizeof(blob)); // optional: lend it the host's blob,
+                                                        // same alignas(8) and multiple-of-8 rule
 
 uint8_t *buffer = NULL;
 hostmem_multi_arena_alloc(&buffer, 4096, &chain);

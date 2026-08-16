@@ -995,17 +995,26 @@ TEST(BucketVectorLimits, IndexCapacityFollowsTheAllocatorsCeiling) {
   alignas(8) uint8_t storage[64];
   hostmem arena{};
   ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
-  uint8_t *block = nullptr;
+  // Seeded with a real address rather than nullptr, and checked after each call: starting from
+  // nullptr, "still nullptr" would also hold for a failure that wrote one, which is the thing
+  // "failures leave every output untouched" rules out.
+  uint8_t *const sentinel = storage;
+  uint8_t *block = sentinel;
   EXPECT_EQ(
       hostmem_alloc(&block, HOSTMEM_MAX_ALLOC_SIZE + 1u, &arena), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
   );
+  EXPECT_EQ(block, sentinel);
   EXPECT_EQ(hostmem_alloc(&block, HOSTMEM_MAX_ALLOC_SIZE, &arena), HOSTMEM_ERROR_OUT_OF_MEMORY);
-  EXPECT_EQ(block, nullptr); // a failure leaves the output untouched
+  EXPECT_EQ(block, sentinel);
 
   // the gate in _index_grow measures against the same constant, and refuses without allocating
-  void **index = nullptr;
+  void **const index_sentinel = reinterpret_cast<void **>(storage);
+  void **index = index_sentinel;
   EXPECT_FALSE(hostmem_bvec_index_grow(&index, 0, HOSTMEM_BVEC_MAX_INDEX_CAPACITY + 1u, nullptr));
-  EXPECT_EQ(index, nullptr);
+  EXPECT_EQ(index, index_sentinel); // refused before the allocator was ever asked
+
+  // and from nothing, the same call at a sane capacity really does hand an array back
+  index = nullptr;
   ASSERT_TRUE(hostmem_bvec_index_grow(&index, 0, HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY, nullptr));
   EXPECT_NE(index, nullptr);
   hostmem_bvec_index_free(index, HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY, nullptr);
