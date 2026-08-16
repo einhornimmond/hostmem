@@ -107,9 +107,10 @@ typedef struct hostmem {
  *
  *  @param[in,out] allocator Allocator to take the descriptor from, or NULL for malloc.
  *  @return Zeroed allocator in default mode, or NULL when @p allocator had no room.
- *  @note Pair with hostmem_destroy() **and hand it the same @p allocator** -- the descriptor is
- *        returned on that allocator's terms, and a different one moves the wrong bump index.
- *        Sizes are passed in and never stored here; so is this.
+ *  @note Pair with hostmem_destroy() **and hand it the same @p allocator**: the descriptor is
+ *        returned on that allocator's terms. Sizes are passed in and never stored here; so is
+ *        this. See hostmem_free() for what a mismatch costs -- naming another arena is caught,
+ *        naming NULL for arena memory is not.
  *  @note An arena hands out 8 byte aligned blocks, which is what this struct needs. A payload
  *        wanting more would need an externally aligned arena.
  *  @whisper A vessel for vessels, drawn from whichever stream the host points to
@@ -216,8 +217,9 @@ static inline hostmem_result hostmem_reinit_arena(hostmem *memory, uint32_t capa
  *                           descriptor is not its most recent allocation. Everything it held is
  *                           released either way; only its own bytes stay until that arena's
  *                           reset. Not a failure, and not a reason to call this twice.
- *  @warning An @p allocator other than the one that handed the descriptor out moves the wrong
- *           bump index and hands the same bytes out twice.
+ *  @warning An @p allocator other than the one that handed the descriptor out leaves it where
+ *           it is and answers with the warning above; NULL in place of an arena reaches free()
+ *           unchecked. See hostmem_free().
  *  @whisper The vessel that held vessels returns to the stream it came from
  */
 hostmem_result hostmem_destroy(hostmem *memory, hostmem *allocator);
@@ -231,7 +233,21 @@ hostmem_result hostmem_destroy(hostmem *memory, hostmem *allocator);
  *  @return Total bytes of failed requests, or 0 if @p memory is NULL.
  *  @whisper The measure of need that exceeded the vessel
  */
-size_t hostmem_overflow_total(const hostmem *memory);
+static inline size_t hostmem_overflow_total(const hostmem *memory) {
+  if (!memory) { return 0; }
+  return memory->out_of_memory_capacity;
+}
+
+// true implies memory != NULL, so callers can skip their own null check
+static inline bool hostmem_is_arena(const hostmem *memory) {
+  if (!memory) return false;
+
+  if (memory->allocation_type != HOSTMEM_ALLOC_TYPE_ARENA_EXTERNAL &&
+      memory->allocation_type != HOSTMEM_ALLOC_TYPE_ARENA_OWNED) {
+    return false;
+  }
+  return true;
+}
 
 // ********** manage memory allocations with data ptr and size explicit *******************
 
@@ -309,8 +325,15 @@ hostmem_result hostmem_clone(
  *  @retval HOSTMEM_SUCCESS Buffer freed, or the arena reclaimed its bytes.
  *  @retval HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED Not the arena's last allocation, so the
  *                      block is still there -- do not treat it as released.
- *  @warning A @p size that does not match the allocation moves the index by the wrong
- *           amount and hands the same bytes out twice.
+ *  @warning A @p size that does not match the allocation is the dangerous mistake here. The
+ *           arena recognizes its tail by address, and a wrong size shifts the address it looks
+ *           for: usually that misses and answers with the warning, but a size that happens to
+ *           reach back over an earlier block matches, and those bytes are handed out again while
+ *           someone still holds them.
+ *  @warning A @p memory that did not hand @p buffer out is caught by that same address check and
+ *           answers with the warning, moving no index -- **except** when NULL is named for
+ *           memory an arena gave: that path does not check anything, it calls free() on a
+ *           pointer malloc never returned.
  *  @whisper Form dissolves, substance returning to source
  */
 hostmem_result hostmem_free(uint8_t *buffer, uint32_t size, hostmem *memory);

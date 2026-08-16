@@ -18,21 +18,10 @@
  * three lines is a second chance for the two to disagree.
  */
 
-// true implies memory != NULL, so callers can skip their own null check
-static bool is_arena(const hostmem *memory) {
-  if (!memory) return false;
-
-  if (memory->allocation_type != HOSTMEM_ALLOC_TYPE_ARENA_EXTERNAL &&
-      memory->allocation_type != HOSTMEM_ALLOC_TYPE_ARENA_OWNED) {
-    return false;
-  }
-  return true;
-}
-
 // Is this the block the bump index rests on? Only that one can be given back. Outside
 // arena mode every block is owned individually, so always yes. Size must be aligned.
 static bool is_reclaimable(const uint8_t *buffer, uint32_t aligned_size, const hostmem *memory) {
-  if (!is_arena(memory)) {
+  if (!hostmem_is_arena(memory)) {
     return true;
   } else if (buffer && aligned_size) {
     return memory->data + memory->last_index - aligned_size == buffer;
@@ -135,17 +124,12 @@ hostmem_result hostmem_destroy(hostmem *memory, hostmem *allocator) {
   return hostmem_free((uint8_t *)memory, sizeof(hostmem), allocator);
 }
 
-size_t hostmem_overflow_total(const hostmem *memory) {
-  if (!memory) { return 0; }
-  return memory->out_of_memory_capacity;
-}
-
 // ********** manage memory allocations with data ptr and size explicit *******************
 
 hostmem_result hostmem_alloc(uint8_t **buffer, uint32_t size, hostmem *memory) {
   if (!buffer) { return HOSTMEM_ERROR_NULL_POINTER; }
   if (!size) { return HOSTMEM_ERROR_INVALID_PARAM; }
-  if (!is_arena(memory)) {
+  if (!hostmem_is_arena(memory)) {
     // through a local first: assigning malloc's result straight into *buffer would leave a NULL
     // behind on failure, and "failures leave every output untouched" has to hold here too
     uint8_t *allocated = (uint8_t *)malloc(size);
@@ -191,7 +175,7 @@ hostmem_result hostmem_realloc(
   if (*buffer && old_size == new_size) { return HOSTMEM_SUCCESS; }
 
   // realloc in non arena mode
-  if (!is_arena(memory)) {
+  if (!hostmem_is_arena(memory)) {
     // realloc(NULL, n) is malloc(n), so a fresh buffer works here too
     uint8_t *resized = (uint8_t *)realloc(*buffer, new_size);
     if (!resized) { return HOSTMEM_ERROR_OUT_OF_MEMORY; }
@@ -245,7 +229,7 @@ hostmem_result hostmem_clone(
 }
 
 hostmem_result hostmem_free(uint8_t *buffer, uint32_t size, hostmem *memory) {
-  if (!is_arena(memory)) {
+  if (!hostmem_is_arena(memory)) {
     free(buffer);
     return HOSTMEM_SUCCESS;
   }
