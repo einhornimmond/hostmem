@@ -47,6 +47,7 @@ up.
 | `hostmem/memory.h` | bump arena or malloc/free, chosen per call by what you pass |
 | `hostmem/memory_block.h` | pointer and size kept together, so freeing needs no bookkeeping from you |
 | `hostmem/multi_arena.h` | a chain of arenas that opens another one instead of running dry |
+| `hostmem/fixed_arena_pool.h` | a fixed set of equal sized arenas, lent out and returned; the peak is known at init |
 | `hostmem/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
 | `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
 | `hostmem/duration.h` | nanoseconds to a readable span |

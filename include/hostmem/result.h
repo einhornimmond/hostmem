@@ -35,6 +35,11 @@ typedef enum hostmem_result {
   HOSTMEM_ERROR_OUT_OF_MEMORY,
   HOSTMEM_ERROR_ARRAY_INDEX_OUT_OF_BOUNDS,
 
+  // a ressource manager like a pool handed out everything it had; the request is sound, the supply is not
+  HOSTMEM_ERROR_RESOURCE_EXHAUSTED,
+  // something is still lent out, so what was asked for would pull it away from its holder
+  HOSTMEM_ERROR_RESOURCE_IN_USE,
+
   HOSTMEM_ERROR_DECODE_FAILED,
   HOSTMEM_ERROR_ENCODE_FAILED,
   HOSTMEM_ERROR_DESTINATION_BUFFER_TO_SMALL,

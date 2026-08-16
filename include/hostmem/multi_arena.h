@@ -197,8 +197,8 @@ hostmem_result hostmem_multi_arena_init(
  * @param[in,out] allocator      Allocator to take this descriptor from, or NULL for malloc.
  * @return Initialized allocator, or NULL when @p allocator had no room or
  *         hostmem_multi_arena_init() refused the arguments.
- * @note Pair with hostmem_multi_arena_destroy() **and hand it the same @p allocator**; a
- *       different one moves the wrong bump index.
+ * @note Pair with hostmem_multi_arena_destroy() **and hand it the same @p allocator**. See
+ *       hostmem_free() for what a mismatch costs.
  * @whisper A vessel for vessels, drawn from whichever stream the host points to
  */
 hostmem_multi_arena *hostmem_multi_arena_create(
@@ -303,8 +303,9 @@ void hostmem_multi_arena_release(hostmem_multi_arena *m);
  *                          descriptor is not its most recent allocation. Every arena in the
  *                          chain is released either way; only the descriptor's own bytes stay
  *                          until that arena's reset.
- * @warning An @p allocator other than the one that handed the descriptor out moves the wrong
- *          bump index and hands the same bytes out twice.
+ * @warning An @p allocator other than the one that handed the descriptor out leaves it where it
+ *          is and answers with the warning above; NULL in place of an arena reaches free()
+ *          unchecked. See hostmem_free().
  * @whisper The vessel that held vessels returns to the stream it came from
  */
 hostmem_result hostmem_multi_arena_destroy(hostmem_multi_arena *m, hostmem *allocator);
