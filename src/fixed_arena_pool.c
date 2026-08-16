@@ -38,13 +38,14 @@ static_assert(
 );
 
 /** Where the buffers begin, measured from the front of the block. */
-static uint64_t buffers_offset(uint16_t arena_count) {
+static inline uint64_t buffers_offset(uint16_t arena_count) {
   return (uint64_t)arena_count * sizeof(hostmem);
 }
 
 /** Bytes the single block occupies. Recomputed rather than stored; the inputs never change. */
-static uint64_t block_bytes(uint16_t arena_count, uint32_t arena_capacity) {
-  return buffers_offset(arena_count) + (uint64_t)arena_count * arena_capacity;
+static inline uint64_t block_bytes(const hostmem_fixed_arena_pool *pool) {
+  if (!pool) { return 0; }
+  return buffers_offset(pool->arena_count) + (uint64_t)pool->arena_count * pool->arena_capacity;
 }
 
 /** Read the link a free arena carries in the first bytes of its buffer. */
@@ -86,12 +87,13 @@ hostmem_result hostmem_fixed_arena_pool_init(
   uint32_t capacity;
   if (!hostmem_align8_u32(arena_capacity, &capacity)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
 
-  uint32_t descriptors_size = (uint32_t)sizeof(hostmem) * (uint32_t)arena_count;
-  if (descriptors_size >= HOSTMEM_MAX_ALLOC_SIZE || HOSTMEM_MAX_ALLOC_SIZE / descriptors_size >= capacity) {
+  uint32_t arena_count_u32 = (uint32_t)arena_count;
+  uint32_t descriptors_size = (uint32_t)sizeof(hostmem) * arena_count_u32;
+  if ((HOSTMEM_MAX_ALLOC_SIZE - descriptors_size) / arena_count_u32 < capacity) {
     return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
   }
 
-  uint32_t total = (uint32_t)sizeof(hostmem) * (uint32_t)arena_count * capacity;
+  uint32_t total = ((uint32_t)sizeof(hostmem) + capacity) * arena_count_u32;
   // one block for everything, so one call gets it and one call gives it back
   uint8_t *block = NULL;
   hostmem_result result = hostmem_alloc(&block, total, source);
@@ -157,7 +159,7 @@ hostmem_result hostmem_fixed_arena_pool_release(hostmem_fixed_arena_pool *pool, 
 
   // the size is recomputed from what the pool holds, the allocator comes from the caller -- the
   // same split every free in this library uses, and the same duty it puts on the caller
-  const uint32_t total = (uint32_t)block_bytes(pool->arena_count, pool->arena_capacity);
+  const uint32_t total = (uint32_t)block_bytes(pool);
   uint8_t *block = (uint8_t *)pool->arenas;
 
   // emptied first: whatever the source answers, the pool has let go of the block and must not
@@ -185,7 +187,7 @@ hostmem_result hostmem_fixed_arena_pool_destroy(
 
 uint32_t hostmem_fixed_arena_pool_reserved(const hostmem_fixed_arena_pool *pool) {
   if (!pool || !pool->arenas) { return 0; }
-  return (uint32_t)block_bytes(pool->arena_count, pool->arena_capacity);
+  return (uint32_t)block_bytes(pool);
 }
 
 // ********** lend and take back *******************
