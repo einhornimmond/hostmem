@@ -10,8 +10,11 @@
 #include <vector>
 
 // Small arenas on purpose: every test crosses an arena boundary. The capacity stays well above
-// HOSTMEM_MULTI_ARENA_FULL_REMAINING (128), or an arena would count as full the moment it opens
-// and each allocation would get one of its own.
+// the full threshold, or an arena would count as full the moment it opens and each allocation
+// would get one of its own — which init refuses outright.
+//
+// The 0 threaded through every init call is the full threshold, left at
+// HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING (128); the tests that mean to tune it say so.
 namespace {
 
 constexpr uint32_t kArenaCapacity = 1024;
@@ -36,7 +39,7 @@ hostmem_multi_arena_stats Measure(const hostmem_multi_arena *m) {
 
 TEST(MultiArena, EmptyAfterInit) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 0u);
   const hostmem_multi_arena_stats stats = Measure(&m);
@@ -49,7 +52,8 @@ TEST(MultiArena, EmptyAfterInit) {
 }
 
 TEST(MultiArena, ZeroInitializedIsUsable) {
-  // no init call at all: the empty state is all zeroes, and the default capacity applies
+  // no init call at all: the empty state is all zeroes, and the defaults apply — both the
+  // capacity and the full threshold read a 0 field that way
   hostmem_multi_arena m{};
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 32, &m), HOSTMEM_SUCCESS);
@@ -66,12 +70,164 @@ TEST(MultiArena, ZeroInitializedIsUsable) {
 }
 
 TEST(MultiArena, InitRejectsBadArguments) {
-  EXPECT_EQ(hostmem_multi_arena_init(nullptr, kArenaCapacity, nullptr), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(
+      hostmem_multi_arena_init(nullptr, kArenaCapacity, 0, nullptr), HOSTMEM_ERROR_NULL_POINTER
+  );
 
   // rounding the capacity up to 8 would wrap uint32_t
   hostmem_multi_arena m{};
-  EXPECT_EQ(hostmem_multi_arena_init(&m, UINT32_MAX, nullptr), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW);
-  EXPECT_EQ(hostmem_multi_arena_create(UINT32_MAX, nullptr), nullptr);
+  EXPECT_EQ(
+      hostmem_multi_arena_init(&m, UINT32_MAX, 0, nullptr), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
+  );
+  EXPECT_EQ(hostmem_multi_arena_create(UINT32_MAX, 0, nullptr), nullptr);
+
+  // a threshold that reaches the capacity would write every arena off at birth
+  EXPECT_EQ(
+      hostmem_multi_arena_init(&m, kArenaCapacity, kArenaCapacity, nullptr),
+      HOSTMEM_ERROR_INVALID_PARAM
+  );
+  EXPECT_EQ(
+      hostmem_multi_arena_init(&m, kArenaCapacity, kArenaCapacity + 1, nullptr),
+      HOSTMEM_ERROR_INVALID_PARAM
+  );
+  EXPECT_EQ(hostmem_multi_arena_create(kArenaCapacity, kArenaCapacity, nullptr), nullptr);
+  // the capacity it is measured against is the effective one, so a 0 there means the default
+  EXPECT_EQ(
+      hostmem_multi_arena_init(&m, 0, HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY, nullptr),
+      HOSTMEM_ERROR_INVALID_PARAM
+  );
+  EXPECT_EQ(
+      hostmem_multi_arena_init(&m, 0, HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY - 8, nullptr),
+      HOSTMEM_SUCCESS
+  );
+  hostmem_multi_arena_release(&m);
+
+  // one below the capacity is allowed: a fresh arena still has room the threshold does not claim
+  ASSERT_EQ(
+      hostmem_multi_arena_init(&m, kArenaCapacity, kArenaCapacity - 8, nullptr), HOSTMEM_SUCCESS
+  );
+  hostmem_multi_arena_release(&m);
+}
+
+TEST(MultiArena, FullThresholdDecidesWhenAnArenaLeavesTheScan) {
+  // 512 is far above the default 128: an arena with half its room left is written off, so the
+  // 256 byte request below never sees it again
+  hostmem_multi_arena m;
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 512, nullptr), HOSTMEM_SUCCESS);
+
+  uint8_t *first = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&first, 512, &m), HOSTMEM_SUCCESS);
+  // exactly 512 left, which this chain calls used up
+  EXPECT_EQ(Measure(&m).open_count, 0u);
+
+  uint8_t *second = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&second, 256, &m), HOSTMEM_SUCCESS);
+  EXPECT_NE(second, first + 512); // room was there, the threshold gave it up
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 2u);
+
+  hostmem_multi_arena_release(&m);
+}
+
+TEST(MultiArena, ASmallThresholdKeepsAnArenaInTheScan) {
+  // 8 is far below the default 128, and the remainder below sits between the two: this chain
+  // keeps chasing it where a default one would already have written the arena off
+  hostmem_multi_arena m;
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 8, nullptr), HOSTMEM_SUCCESS);
+
+  uint8_t *first = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&first, kArenaCapacity - 64, &m), HOSTMEM_SUCCESS);
+  // 64 bytes left: below the default threshold, above this chain's
+  EXPECT_EQ(Measure(&m).open_count, 1u);
+
+  uint8_t *second = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&second, 64, &m), HOSTMEM_SUCCESS);
+  EXPECT_EQ(second, first + kArenaCapacity - 64); // served from the tail of arena 0
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 1u);
+  EXPECT_EQ(Measure(&m).used, kArenaCapacity); // the arena was used down to the last byte
+
+  // nothing left at all: even this chain passes it now
+  EXPECT_EQ(Measure(&m).open_count, 0u);
+  uint8_t *third = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&third, 64, &m), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 2u);
+
+  hostmem_multi_arena_release(&m);
+}
+
+TEST(MultiArena, AThresholdOneStepBelowTheRequestIsTheExactLine) {
+  // What the module text rests on: an arena serves a request of n while n bytes are left, and is
+  // written off at or below the threshold. n - 8 is therefore the value that writes it off
+  // exactly when it can no longer take that request — n itself already gives up one request's
+  // worth per arena. Both chains are left with exactly 256 bytes, and only the choice differs.
+  constexpr uint32_t kRequest = 256;
+  hostmem_multi_arena exact, one_step_high;
+  ASSERT_EQ(
+      hostmem_multi_arena_init(&exact, kArenaCapacity, kRequest - 8, nullptr), HOSTMEM_SUCCESS
+  );
+  ASSERT_EQ(
+      hostmem_multi_arena_init(&one_step_high, kArenaCapacity, kRequest, nullptr), HOSTMEM_SUCCESS
+  );
+
+  uint8_t *a = nullptr;
+  uint8_t *b = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&a, kArenaCapacity - kRequest, &exact), HOSTMEM_SUCCESS);
+  ASSERT_EQ(
+      hostmem_multi_arena_alloc(&b, kArenaCapacity - kRequest, &one_step_high), HOSTMEM_SUCCESS
+  );
+  EXPECT_EQ(Measure(&exact).open_count, 1u);         // 256 left, above 248
+  EXPECT_EQ(Measure(&one_step_high).open_count, 0u); // 256 left, not above 256
+
+  uint8_t *a2 = nullptr;
+  uint8_t *b2 = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&a2, kRequest, &exact), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_alloc(&b2, kRequest, &one_step_high), HOSTMEM_SUCCESS);
+
+  // the exact line uses the arena to its last byte; one step high opens fresh ground and leaves
+  // a full request's worth behind, which is what "a little above" would have cost per arena
+  EXPECT_EQ(a2, a + kArenaCapacity - kRequest);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&exact), 1u);
+  EXPECT_EQ(Measure(&exact).used, kArenaCapacity);
+
+  EXPECT_NE(b2, b + kArenaCapacity - kRequest);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&one_step_high), 2u);
+
+  // the same bytes handed out either way, twice the ground held to do it
+  EXPECT_EQ(Measure(&exact).used, Measure(&one_step_high).used);
+  EXPECT_EQ(Measure(&exact).reserved, kArenaCapacity);
+  EXPECT_EQ(Measure(&one_step_high).reserved, 2u * kArenaCapacity);
+
+  hostmem_multi_arena_release(&exact);
+  hostmem_multi_arena_release(&one_step_high);
+}
+
+TEST(MultiArena, ZeroSelectsTheDefaultThreshold) {
+  // 0 asks for the default, not for "write nothing off" — the two chains must behave alike
+  hostmem_multi_arena zero, named;
+  ASSERT_EQ(hostmem_multi_arena_init(&zero, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(
+      hostmem_multi_arena_init(
+          &named, kArenaCapacity, HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING, nullptr
+      ),
+      HOSTMEM_SUCCESS
+  );
+
+  // leaves exactly the default threshold behind, so both chains write the arena off
+  uint8_t *a = nullptr;
+  uint8_t *b = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&a, kArenaCapacity - 128, &zero), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_alloc(&b, kArenaCapacity - 128, &named), HOSTMEM_SUCCESS);
+  EXPECT_EQ(Measure(&zero).open_count, 0u);
+  EXPECT_EQ(Measure(&named).open_count, 0u);
+
+  uint8_t *a2 = nullptr;
+  uint8_t *b2 = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&a2, 64, &zero), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_alloc(&b2, 64, &named), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&zero), 2u);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(&named), 2u);
+
+  hostmem_multi_arena_release(&zero);
+  hostmem_multi_arena_release(&named);
 }
 
 TEST(MultiArena, NullAllocatorIsNotAFallback) {
@@ -82,7 +238,7 @@ TEST(MultiArena, NullAllocatorIsNotAFallback) {
   EXPECT_EQ(hostmem_multi_arena_free(nullptr, 8, nullptr), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_reserve(nullptr, 4), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_shrink(nullptr), HOSTMEM_ERROR_NULL_POINTER);
-  EXPECT_EQ(hostmem_multi_arena_adopt(nullptr, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_multi_arena_borrow(nullptr, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_measure(nullptr, nullptr), HOSTMEM_ERROR_NULL_POINTER);
   // NULL is a no-op, not a crash
   hostmem_multi_arena_reset(nullptr);
@@ -91,7 +247,7 @@ TEST(MultiArena, NullAllocatorIsNotAFallback) {
 }
 
 TEST(MultiArena, CreateAndDestroy) {
-  hostmem_multi_arena *m = hostmem_multi_arena_create(kArenaCapacity, nullptr);
+  hostmem_multi_arena *m = hostmem_multi_arena_create(kArenaCapacity, 0, nullptr);
   ASSERT_NE(m, nullptr);
   EXPECT_EQ(hostmem_multi_arena_arena_count(m), 0u);
 
@@ -108,7 +264,7 @@ TEST(MultiArena, CreateAndDestroy) {
 
 TEST(MultiArena, AllocRejectsBadArguments) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *buffer = nullptr;
   EXPECT_EQ(hostmem_multi_arena_alloc(nullptr, 8, &m), HOSTMEM_ERROR_NULL_POINTER);
@@ -123,7 +279,7 @@ TEST(MultiArena, AllocRejectsBadArguments) {
 
 TEST(MultiArena, SizesRoundUpToEight) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *first = nullptr;
   uint8_t *second = nullptr;
@@ -140,7 +296,7 @@ TEST(MultiArena, SizesRoundUpToEight) {
 
 TEST(MultiArena, OpensAnotherArenaWhenTheCurrentOneIsFull) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   // 4 × 256 fills the first arena exactly
   std::vector<uint8_t *> blocks;
@@ -166,7 +322,7 @@ TEST(MultiArena, OpensAnotherArenaWhenTheCurrentOneIsFull) {
 
 TEST(MultiArena, EveryBlockKeepsItsBytesAcrossManyArenas) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   constexpr uint32_t kBlockSize = 96;
   constexpr uint32_t kBlocks = 500; // far more than one arena holds
@@ -196,7 +352,7 @@ TEST(MultiArena, EveryBlockKeepsItsBytesAcrossManyArenas) {
 
 TEST(MultiArena, OversizedRequestGetsAnArenaOfItsOwn) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *small = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&small, 256, &m), HOSTMEM_SUCCESS);
@@ -223,7 +379,7 @@ TEST(MultiArena, OversizedRequestGetsAnArenaOfItsOwn) {
 
 TEST(MultiArena, AnArenaTooSmallForOneRequestStillServesTheNext) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   // leaves 512 bytes in arena 0 — above the full threshold, below the next request
   uint8_t *first = nullptr;
@@ -244,7 +400,7 @@ TEST(MultiArena, AnArenaTooSmallForOneRequestStillServesTheNext) {
 
 TEST(MultiArena, AnArenaThatHasRunFullIsLeftBehindForGood) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   // 64 bytes left, at or below the full threshold: the front marker moves past this arena and
   // does not come back to it, even for a request its remainder would still hold
@@ -262,7 +418,7 @@ TEST(MultiArena, AnArenaThatHasRunFullIsLeftBehindForGood) {
 
 TEST(MultiArena, TheScanCarriesOnPastAnArenaThatIsTooSmall) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   // arena 0 keeps 224 bytes: too few for what follows, too many to count as full
   uint8_t *first = nullptr;
@@ -282,7 +438,7 @@ TEST(MultiArena, TheScanCarriesOnPastAnArenaThatIsTooSmall) {
 
 TEST(MultiArena, Clone) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   const uint8_t source[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
   uint8_t *copy = nullptr;
@@ -306,7 +462,7 @@ TEST(MultiArena, Clone) {
 
 TEST(MultiArena, FreeTakesBackOnlyTheTailOfItsArena) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *first = nullptr;
   uint8_t *second = nullptr;
@@ -333,7 +489,7 @@ TEST(MultiArena, FreeTakesBackOnlyTheTailOfItsArena) {
 
 TEST(MultiArena, FreeRejectsAnAddressFromSomewhereElse) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 64, &m), HOSTMEM_SUCCESS);
@@ -347,7 +503,7 @@ TEST(MultiArena, FreeRejectsAnAddressFromSomewhereElse) {
 
 TEST(MultiArena, FreeReopensAnArenaThePathHadPassed) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   // fill arena 0 to the brim, then force arena 1 open
   uint8_t *last_in_first = nullptr;
@@ -370,7 +526,7 @@ TEST(MultiArena, FreeReopensAnArenaThePathHadPassed) {
 
 TEST(MultiArena, ResetKeepsTheArenasAndAsksTheHostForNothing) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *very_first = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&very_first, 256, &m), HOSTMEM_SUCCESS);
@@ -400,7 +556,7 @@ TEST(MultiArena, ResetKeepsTheArenasAndAsksTheHostForNothing) {
 
 TEST(MultiArena, ShrinkReleasesTheTrailingEmptyArenas) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   for (int i = 0; i < 10; ++i) {
     uint8_t *buffer = nullptr;
@@ -430,17 +586,17 @@ TEST(MultiArena, ShrinkReleasesTheTrailingEmptyArenas) {
 // borrowed ground
 // ---------------------------------------------------------------------------
 
-TEST(MultiArena, AdoptedBufferIsUsedAndNeverFreed) {
+TEST(MultiArena, BorrowedBufferIsUsedAndNeverFreed) {
   alignas(8) uint8_t host_block[512];
   std::memset(host_block, 0x5A, sizeof(host_block));
 
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
-  ASSERT_EQ(hostmem_multi_arena_adopt(&m, host_block, sizeof(host_block)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_borrow(&m, host_block, sizeof(host_block)), HOSTMEM_SUCCESS);
   EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 1u);
   EXPECT_EQ(Measure(&m).reserved, sizeof(host_block));
 
-  // adopted before the first allocation, so it is filled first
+  // borrowed before the first allocation, so it is filled first
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 128, &m), HOSTMEM_SUCCESS);
   EXPECT_EQ(buffer, host_block);
@@ -455,8 +611,8 @@ TEST(MultiArena, ShrinkStopsAtBorrowedGround) {
   alignas(8) uint8_t host_block[512];
 
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
-  ASSERT_EQ(hostmem_multi_arena_adopt(&m, host_block, sizeof(host_block)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_borrow(&m, host_block, sizeof(host_block)), HOSTMEM_SUCCESS);
 
   // 512 bytes borrowed, then more than that asked for: an owned arena joins behind it
   for (int i = 0; i < 4; ++i) {
@@ -474,17 +630,17 @@ TEST(MultiArena, ShrinkStopsAtBorrowedGround) {
   hostmem_multi_arena_release(&m);
 }
 
-TEST(MultiArena, AdoptRejectsBadArguments) {
+TEST(MultiArena, BorrowRejectsBadArguments) {
   alignas(8) uint8_t host_block[64];
 
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
-  EXPECT_EQ(hostmem_multi_arena_adopt(&m, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
-  EXPECT_EQ(hostmem_multi_arena_adopt(&m, host_block, 0), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_multi_arena_borrow(&m, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_multi_arena_borrow(&m, host_block, 0), HOSTMEM_ERROR_INVALID_PARAM);
   // capacity not a multiple of 8, and a base that is not 8 byte aligned
-  EXPECT_EQ(hostmem_multi_arena_adopt(&m, host_block, 60), HOSTMEM_ERROR_INVALID_PARAM);
-  EXPECT_EQ(hostmem_multi_arena_adopt(&m, host_block + 1, 56), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_multi_arena_borrow(&m, host_block, 60), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_multi_arena_borrow(&m, host_block + 1, 56), HOSTMEM_ERROR_INVALID_PARAM);
   EXPECT_EQ(hostmem_multi_arena_arena_count(&m), 0u);
 
   hostmem_multi_arena_release(&m);
@@ -500,12 +656,12 @@ TEST(MultiArena, BookkeepingCanComeFromAnArena) {
   alignas(8) uint8_t bookkeeping_block[4096];
   hostmem bookkeeping{};
   ASSERT_EQ(
-      hostmem_init_arena_static(&bookkeeping, bookkeeping_block, sizeof(bookkeeping_block)),
+      hostmem_init_arena_borrow(&bookkeeping, bookkeeping_block, sizeof(bookkeeping_block)),
       HOSTMEM_SUCCESS
   );
 
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, &bookkeeping), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, &bookkeeping), HOSTMEM_SUCCESS);
   // an arena cannot reclaim a superseded index array, so the slots are taken once, up front
   ASSERT_EQ(hostmem_multi_arena_reserve(&m, 16), HOSTMEM_SUCCESS);
   const uint32_t after_reserve = bookkeeping.last_index;
@@ -530,7 +686,7 @@ TEST(MultiArena, BookkeepingCanComeFromAnArena) {
 #if defined(__linux__) && !defined(HOSTMEM_TEST_SKIP_MEMORY_LIMIT)
 TEST(MultiArena, AnArenaThatCannotBeOpenedLeavesTheChainUntouched) {
   hostmem_multi_arena m;
-  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, nullptr), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
   uint8_t *kept = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&kept, 64, &m), HOSTMEM_SUCCESS);

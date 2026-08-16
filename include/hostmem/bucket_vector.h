@@ -140,6 +140,16 @@ extern "C" {
 #define HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY 8
 
 /**
+ * @brief Largest index array the allocator can hand out, counted in bucket pointer slots.
+ *
+ * The index array is one allocation, so what bounds it is @ref HOSTMEM_MAX_ALLOC_SIZE and not
+ * the width of the slot count. Both the doubling in `_grow` and the gate in
+ * hostmem_bvec_index_grow() measure against this, so a capacity that passes one is never
+ * refused by the other.
+ */
+#define HOSTMEM_BVEC_MAX_INDEX_CAPACITY ((uint32_t)(HOSTMEM_MAX_ALLOC_SIZE / sizeof(void *)))
+
+/**
  * @brief Bytes one bucket of @p type occupies at bucket size `1 << log2_bucket`.
  *
  * Internal to the generated bodies. The cast is safe for every instantiation the static
@@ -184,8 +194,9 @@ bool hostmem_bvec_raw_free(void *ptr, uint32_t size, hostmem *allocator);
  * @param[in]     old_capacity Slots @c *index was allocated with — the allocated count, not
  *                             the used one. An arena resizes by size, so a wrong value moves
  *                             its bump index by the wrong amount.
- * @param[in]     new_capacity Requested slot count; must be > 0. Counts whose byte size
- *                             would not fit uint32_t are rejected before allocating.
+ * @param[in]     new_capacity Requested slot count; must be > 0. Anything above
+ *                             @ref HOSTMEM_BVEC_MAX_INDEX_CAPACITY is rejected before
+ *                             allocating.
  * @param[in,out] allocator    Allocator to draw from, or NULL for realloc.
  * @return true on success, false on overflow or exhaustion — @c *index stays valid then.
  */
@@ -239,7 +250,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     uint32_t bucket_capacity; /**< Pointer slots available in @c buckets. */                       \
     type *tail;               /**< Bucket currently being filled; NULL while empty. */             \
     uint32_t tail_index;      /**< Index of @c tail within @c buckets. */                          \
-    uint32_t tail_used;       /**< Slots written in @c tail; BUCKET_CAPACITY when full. */         \
+    uint32_t tail_used;       /**< Slots in @c tail; BUCKET_CAPACITY when full or @c tail NULL. */ \
     uint32_t size;            /**< Total element count. */                                         \
     hostmem *allocator;       /**< Allocator, or NULL for malloc/free. */                          \
   } name;                                                                                          \
@@ -285,6 +296,8 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     v->bucket_capacity = 0;                                                                        \
     v->tail = NULL;                                                                                \
     v->tail_index = 0;                                                                             \
+    /* no bucket is open, so tail_used counts nothing: CAP is the one value that means "no */      \
+    /* room here", the same a full tail carries, and it sends the first _emplace to _grow */       \
     v->tail_used = (uint32_t)name##_BUCKET_CAPACITY;                                               \
     v->size = 0;                                                                                   \
     v->allocator = allocator;                                                                      \
@@ -356,7 +369,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
   scope void name##_clear(name *v) {                                                               \
     v->tail = NULL;                                                                                \
     v->tail_index = 0;                                                                             \
-    v->tail_used = (uint32_t)name##_BUCKET_CAPACITY;                                               \
+    v->tail_used = (uint32_t)name##_BUCKET_CAPACITY; /* no bucket open, as after _init */          \
     v->size = 0;                                                                                   \
   }                                                                                                \
                                                                                                    \
@@ -383,9 +396,17 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
       type *bucket;                                                                                \
       if (v->bucket_count == v->bucket_capacity) {                                                 \
         uint32_t new_capacity;                                                                     \
-        if (v->bucket_capacity > UINT32_MAX / 2) return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;         \
+        /* the ceiling is what the allocator can hand out in one block, not half the width  */     \
+        /* of the counter; sitting on it means there is nothing left to grow into           */     \
+        if (v->bucket_capacity >= HOSTMEM_BVEC_MAX_INDEX_CAPACITY) {                               \
+          return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;                                                \
+        }                                                                                          \
+        /* below the ceiling, so doubling stays inside uint32_t and only needs capping */          \
         new_capacity = v->bucket_capacity ? v->bucket_capacity * 2                                 \
                                           : (uint32_t)HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY;         \
+        if (new_capacity > HOSTMEM_BVEC_MAX_INDEX_CAPACITY) {                                      \
+          new_capacity = HOSTMEM_BVEC_MAX_INDEX_CAPACITY;                                          \
+        }                                                                                          \
         if (!hostmem_bvec_index_grow(                                                              \
                 (void ***)&v->buckets, v->bucket_capacity, new_capacity, v->allocator              \
             )) {                                                                                   \
@@ -447,6 +468,8 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
         v->tail = NULL;                                                                            \
         v->tail_index = 0;                                                                         \
       }                                                                                            \
+      /* the bucket we stepped back into is full by definition; with none left it is the */        \
+      /* same value standing for "no bucket open", so tail_used is never 0 between calls */        \
       v->tail_used = (uint32_t)name##_BUCKET_CAPACITY;                                             \
     }                                                                                              \
     return HOSTMEM_SUCCESS;                                                                        \

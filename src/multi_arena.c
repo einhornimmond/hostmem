@@ -29,18 +29,17 @@
 /** The descriptor vector, generated once here for the whole library. */
 HOSTMEM_BVEC_DEFINE(hostmem_arena_vec, hostmem, HOSTMEM_MULTI_ARENA_BUCKET_LOG2, )
 
-// round up to a multiple of 8, false if that would wrap uint32_t
-static bool align8_u32(uint32_t x, uint32_t *result) {
-  if (x > UINT32_MAX - 7) { return false; }
-
-  *result = HOSTMEM_ALIGN8(x);
-  return true;
-}
-
 // the capacity a fresh regular arena is opened with; 0 in the field means "the default", so a
 // zero-initialized descriptor allocates exactly like an initialized one
 static uint32_t regular_capacity(const hostmem_multi_arena *m) {
   return m->arena_capacity ? m->arena_capacity : HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY;
+}
+
+// the remainder this chain writes an arena off at; 0 in the field means "the default", read the
+// same way as arena_capacity so that a zero-initialized descriptor behaves like an initialized
+// one. The caller sets it at init from the request sizes it expects.
+static uint32_t full_threshold(const hostmem_multi_arena *m) {
+  return m->full_remaining ? m->full_remaining : HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING;
 }
 
 // bytes still to be had from this arena. last_index never passes capacity, so this cannot wrap
@@ -50,9 +49,10 @@ static uint32_t remaining(const hostmem *arena) {
 
 // An arena whose remainder has fallen this low is done: the front marker passes it and never
 // looks back. A threshold rather than "nothing left", because the last few bytes of an arena
-// would otherwise keep the scan walking over it for the rest of the chain's life.
-static bool has_run_full(const hostmem *arena) {
-  return remaining(arena) <= HOSTMEM_MULTI_ARENA_FULL_REMAINING;
+// would otherwise keep the scan walking over it for the rest of the chain's life. Where that
+// line sits is the caller's call — see full_threshold above.
+static bool has_run_full(const hostmem *arena, uint32_t threshold) {
+  return remaining(arena) <= threshold;
 }
 
 // Append an arena that is already initialized. On failure the descriptor is released, so the
@@ -69,24 +69,38 @@ static hostmem_result push_arena(hostmem_multi_arena *m, hostmem *arena) {
 // ********** manage the allocator itself *******************
 
 hostmem_result hostmem_multi_arena_init(
-    hostmem_multi_arena *m, uint32_t arena_capacity, hostmem *bookkeeping
+    hostmem_multi_arena *m, uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
 ) {
   if (!m) { return HOSTMEM_ERROR_NULL_POINTER; }
   uint32_t aligned_capacity;
-  if (!align8_u32(arena_capacity, &aligned_capacity)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(arena_capacity, &aligned_capacity)) {
+    return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
+  }
+
+  // A threshold that reaches the capacity would call every arena full the moment it opens: the
+  // marker would walk past fresh ground and every allocation would get an arena of its own. The
+  // effective values are compared, so a 0 on either side means what it means everywhere else.
+  const uint32_t capacity =
+      aligned_capacity ? aligned_capacity : HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY;
+  const uint32_t threshold =
+      full_remaining ? full_remaining : HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING;
+  if (threshold >= capacity) { return HOSTMEM_ERROR_INVALID_PARAM; }
 
   // every field is written, none is read: uninitialized storage is a valid input
   m->arena_capacity = aligned_capacity;
+  m->full_remaining = full_remaining;
   m->first_open = 0;
   return hostmem_arena_vec_init(&m->arenas, bookkeeping);
 }
 
-hostmem_multi_arena *hostmem_multi_arena_create(uint32_t arena_capacity, hostmem *bookkeeping) {
+hostmem_multi_arena *hostmem_multi_arena_create(
+    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
+) {
   hostmem_multi_arena *m = NULL;
   if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&m, sizeof(hostmem_multi_arena), NULL)) {
     return NULL;
   }
-  if (HOSTMEM_SUCCESS != hostmem_multi_arena_init(m, arena_capacity, bookkeeping)) {
+  if (HOSTMEM_SUCCESS != hostmem_multi_arena_init(m, arena_capacity, full_remaining, bookkeeping)) {
     hostmem_free((uint8_t *)m, sizeof(hostmem_multi_arena), NULL);
     return NULL;
   }
@@ -98,12 +112,14 @@ hostmem_result hostmem_multi_arena_reserve(hostmem_multi_arena *m, uint32_t aren
   return hostmem_arena_vec_reserve(&m->arenas, arena_count);
 }
 
-hostmem_result hostmem_multi_arena_adopt(hostmem_multi_arena *m, uint8_t *data, uint32_t capacity) {
+hostmem_result hostmem_multi_arena_borrow(
+    hostmem_multi_arena *m, uint8_t *data, uint32_t capacity
+) {
   if (!m || !data) { return HOSTMEM_ERROR_NULL_POINTER; }
 
   // the borrowed block is checked by the arena itself; nothing is appended if it is unfit
   hostmem arena;
-  hostmem_result result = hostmem_init_arena_static(&arena, data, capacity);
+  hostmem_result result = hostmem_init_arena_borrow(&arena, data, capacity);
   if (HOSTMEM_SUCCESS != result) { return result; }
 
   return push_arena(m, &arena);
@@ -137,7 +153,7 @@ hostmem_result hostmem_multi_arena_shrink(hostmem_multi_arena *m) {
 
 void hostmem_multi_arena_release(hostmem_multi_arena *m) {
   if (!m) return;
-  // owned arenas give their buffer back, adopted ones are simply let go
+  // owned arenas give their buffer back, borrowed ones are simply let go
   hostmem *arena;
   HOSTMEM_BVEC_FOREACH(hostmem_arena_vec, &m->arenas, arena, i) {
     hostmem_release(arena);
@@ -160,11 +176,12 @@ hostmem_result hostmem_multi_arena_measure(
 
   // uint64 for the sums: a single arena is measured in uint32_t, a chain of them is not
   hostmem_multi_arena_stats stats = {0, 0, 0, 0};
+  const uint32_t threshold = full_threshold(m);
   hostmem *arena;
   HOSTMEM_BVEC_FOREACH(hostmem_arena_vec, &m->arenas, arena, i) {
     stats.reserved += arena->capacity;
     stats.used += arena->last_index;
-    if (!has_run_full(arena)) { stats.open_count++; }
+    if (!has_run_full(arena, threshold)) { stats.open_count++; }
   }
   stats.arena_count = hostmem_arena_vec_size(&m->arenas);
 
@@ -178,13 +195,16 @@ hostmem_result hostmem_multi_arena_alloc(uint8_t **buffer, uint32_t size, hostme
   if (!buffer || !m) { return HOSTMEM_ERROR_NULL_POINTER; }
   if (!size) { return HOSTMEM_ERROR_INVALID_PARAM; }
   uint32_t needed;
-  if (!align8_u32(size, &needed)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(size, &needed)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
 
   const uint32_t count = hostmem_arena_vec_size(&m->arenas);
+  const uint32_t threshold = full_threshold(m);
 
   // the front marker settles past everything that has run full, once, instead of every scan
-  // walking the same exhausted arenas again
-  while (m->first_open < count && has_run_full(hostmem_arena_vec_get(&m->arenas, m->first_open))) {
+  // walking the same exhausted arenas again. How much room an arena may still hold and be passed
+  // over anyway is the chain's own threshold — the caller sized it for these requests.
+  while (m->first_open < count &&
+         has_run_full(hostmem_arena_vec_get(&m->arenas, m->first_open), threshold)) {
     m->first_open++;
   }
 

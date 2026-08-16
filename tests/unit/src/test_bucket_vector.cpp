@@ -305,7 +305,7 @@ TEST(BucketVector, ArenaAllocator) {
 TEST(BucketVector, ExhaustedArenaReportsOutOfMemory) {
   alignas(8) uint8_t buffer[256];
   hostmem small{};
-  ASSERT_EQ(hostmem_init_arena_static(&small, buffer, sizeof(buffer)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&small, buffer, sizeof(buffer)), HOSTMEM_SUCCESS);
 
   u32_vec v;
   ASSERT_EQ(u32_vec_init(&v, &small), HOSTMEM_SUCCESS);
@@ -581,7 +581,7 @@ TEST(BucketVectorShrink, RefusedTighteningKeepsPointerAndSize) {
   // has to be told — a capacity that drifts below the real one strands the block for good.
   alignas(8) uint8_t storage[8192];
   hostmem arena{};
-  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   u32_vec v;
   ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
@@ -617,7 +617,7 @@ TEST(BucketVectorShrink, WhatTheArenaRefusedComesBackLater) {
   // same buckets are reclaimable, and a second _shrink has to hand them over.
   alignas(8) uint8_t storage[8192];
   hostmem arena{};
-  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   u32_vec v;
   ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
@@ -655,7 +655,7 @@ TEST(BucketVectorShrink, BuriedGrowthRecordsTheNewBlock) {
   // the new address and the new capacity, or every bucket pointer is read from stale memory.
   alignas(8) uint8_t storage[8192];
   hostmem arena{};
-  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   u32_vec v;
   ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
@@ -947,7 +947,7 @@ TEST(BucketVectorLimits, ReserveHugeFailsWithoutDamage) {
   // RAM before returning.
   alignas(8) uint8_t storage[4096];
   hostmem arena{};
-  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   u32_vec v;
   ASSERT_EQ(u32_vec_init(&v, &arena), HOSTMEM_SUCCESS);
@@ -974,6 +974,62 @@ TEST(BucketVectorLimits, ReserveHugeFailsWithoutDamage) {
   ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
   u32_vec_free(&v);
   hostmem_release(&arena);
+}
+
+TEST(BucketVectorLimits, IndexCapacityFollowsTheAllocatorsCeiling) {
+  // The index array is one allocation, so its slot count is bounded by what hostmem will hand
+  // out — not by half the width of the counter. These two must not drift apart, which is the
+  // whole point of deriving one from the other.
+  static_assert(
+      HOSTMEM_BVEC_MAX_INDEX_CAPACITY == HOSTMEM_MAX_ALLOC_SIZE / sizeof(void *),
+      "index capacity must be the allocation ceiling in pointer slots"
+  );
+  // _grow tests `>= MAX` before doubling, so at most MAX-1 ever reaches the multiplication
+  static_assert(
+      static_cast<uint64_t>(HOSTMEM_BVEC_MAX_INDEX_CAPACITY - 1u) * 2u <= UINT32_MAX,
+      "doubling below the ceiling must stay inside uint32_t"
+  );
+
+  // the ceiling is exactly where the allocator's rounding to 8 gives up: one byte more cannot
+  // be aligned without wrapping, the value itself merely runs out of arena
+  alignas(8) uint8_t storage[64];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  uint8_t *block = nullptr;
+  EXPECT_EQ(
+      hostmem_alloc(&block, HOSTMEM_MAX_ALLOC_SIZE + 1u, &arena), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
+  );
+  EXPECT_EQ(hostmem_alloc(&block, HOSTMEM_MAX_ALLOC_SIZE, &arena), HOSTMEM_ERROR_OUT_OF_MEMORY);
+  EXPECT_EQ(block, nullptr); // a failure leaves the output untouched
+
+  // the gate in _index_grow measures against the same constant, and refuses without allocating
+  void **index = nullptr;
+  EXPECT_FALSE(hostmem_bvec_index_grow(&index, 0, HOSTMEM_BVEC_MAX_INDEX_CAPACITY + 1u, nullptr));
+  EXPECT_EQ(index, nullptr);
+  ASSERT_TRUE(hostmem_bvec_index_grow(&index, 0, HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY, nullptr));
+  EXPECT_NE(index, nullptr);
+  hostmem_bvec_index_free(index, HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY, nullptr);
+}
+
+TEST(BucketVectorLimits, GrowKeepsDoublingBelowTheCeiling) {
+  // one element per bucket, so every push needs a fresh index slot and the doubling is visible
+  one_vec v;
+  ASSERT_EQ(one_vec_init(&v, nullptr), HOSTMEM_SUCCESS);
+
+  ASSERT_EQ(one_vec_push(&v, 0u), HOSTMEM_SUCCESS);
+  EXPECT_EQ(v.bucket_capacity, uint32_t{HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY});
+
+  uint32_t expected = HOSTMEM_BVEC_INDEX_INITIAL_CAPACITY;
+  for (uint32_t i = 1; i < 300u; ++i) {
+    ASSERT_EQ(one_vec_push(&v, i), HOSTMEM_SUCCESS) << "push " << i;
+    if (v.bucket_count > expected) expected *= 2;
+    ASSERT_EQ(v.bucket_capacity, expected) << "push " << i;
+    ASSERT_LE(v.bucket_capacity, HOSTMEM_BVEC_MAX_INDEX_CAPACITY);
+  }
+  EXPECT_EQ(one_vec_size(&v), 300u);
+  for (uint32_t i = 0; i < 300u; ++i) ASSERT_EQ(*one_vec_at(&v, i), i);
+  ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, one_vec_BUCKET_CAPACITY));
+  one_vec_free(&v);
 }
 
 TEST(BucketVectorLimits, RepeatedClearAndReserve) {
@@ -1047,7 +1103,7 @@ TEST(BucketVectorLimits, FreeAfterHeavyUseResetsEverything) {
   // unnoticed with malloc — here the next bucket has to come out of the caller's storage.
   alignas(8) uint8_t storage[4096];
   hostmem arena{};
-  ASSERT_EQ(hostmem_init_arena_static(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   u32_vec a;
   ASSERT_EQ(u32_vec_init(&a, &arena), HOSTMEM_SUCCESS);

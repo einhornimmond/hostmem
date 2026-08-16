@@ -15,7 +15,7 @@
  */
 
 /** Slots to bytes. The callers keep capacities inside the bound checked in _index_grow. */
-static uint32_t index_bytes(uint32_t capacity) {
+static inline uint32_t index_bytes(uint32_t capacity) {
   return (uint32_t)((size_t)capacity * sizeof(void *));
 }
 
@@ -37,8 +37,9 @@ bool hostmem_bvec_index_grow(
 ) {
   if (!index || !new_capacity) return false;
   // slot counts are uint32_t, the byte size they stand for need not be; this is the gate that
-  // decides it, and old_capacity passed through it when it was granted
-  if (new_capacity > UINT32_MAX / sizeof(void *)) return false;
+  // decides it, and old_capacity passed through it when it was granted. The bound is what
+  // hostmem will actually allocate, so a capacity accepted here is never refused below.
+  if (new_capacity > HOSTMEM_BVEC_MAX_INDEX_CAPACITY) return false;
   // the warning counts as done here: an arena that had to move the block still resized it
   hostmem_result result = hostmem_realloc(
       (uint8_t **)index, index_bytes(old_capacity), index_bytes(new_capacity), allocator

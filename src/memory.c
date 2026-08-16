@@ -9,11 +9,13 @@
 /*
  * Bump allocator: `last_index` walks forward through `data` and only walks back for the
  * block sitting right at it. Two invariants keep that cheap and every pointer 8 byte
- * aligned: `data` is aligned (malloc guarantees it, init_arena_static checks it), and
- * every size that moves the index goes through align8_u32 first — both directions.
+ * aligned: `data` is aligned (malloc guarantees it, init_arena_borrow checks it), and
+ * every size that moves the index goes through hostmem_align8_u32 first — both directions.
  *
  * So no allocation needs padding, and alloc/free/realloc must agree on the *aligned*
- * size. A wrong old_size from a caller corrupts the arena.
+ * size. A wrong old_size from a caller corrupts the arena. That rounding lives in memory.h
+ * rather than here: the multi arena has to arrive at the same figure, and a second copy of
+ * three lines is a second chance for the two to disagree.
  */
 
 // true implies memory != NULL, so callers can skip their own null check
@@ -24,14 +26,6 @@ static bool is_arena(const hostmem *memory) {
       memory->allocation_type != HOSTMEM_ALLOC_TYPE_ARENA_OWNED) {
     return false;
   }
-  return true;
-}
-
-// round up to a multiple of 8, false if that would wrap uint32_t
-static bool align8_u32(uint32_t x, uint32_t *result) {
-  if (x > UINT32_MAX - 7) { return false; }
-
-  *result = HOSTMEM_ALIGN8(x);
   return true;
 }
 
@@ -67,7 +61,8 @@ static bool account_capacity_exceeded(uint32_t aligned_size, hostmem *memory) {
 hostmem *hostmem_create() {
   hostmem *memory = NULL;
   if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&memory, sizeof(hostmem), NULL)) { return NULL; }
-  // zeroed, because init inspects the previous state to find an arena it already owns
+  // zeroed, so it is in a valid state, even if using it with type = HOSTMEM_ALLOC_TYPE_DEFAULT the
+  // same is as memory = NULL
   memset(memory, 0, sizeof(hostmem));
   return memory;
 }
@@ -76,7 +71,9 @@ hostmem_result hostmem_init_arena(hostmem *memory, uint32_t capacity) {
   if (!memory) { return HOSTMEM_ERROR_NULL_POINTER; }
   if (!capacity) { return HOSTMEM_ERROR_INVALID_PARAM; }
   uint32_t aligned_capacity;
-  if (!align8_u32(capacity, &aligned_capacity)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(capacity, &aligned_capacity)) {
+    return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
+  }
 
   // allocate before touching *memory, so a failure leaves it exactly as it was
   uint8_t *data = NULL;
@@ -92,10 +89,12 @@ hostmem_result hostmem_init_arena(hostmem *memory, uint32_t capacity) {
   return HOSTMEM_SUCCESS;
 }
 
-hostmem_result hostmem_init_arena_static(hostmem *memory, uint8_t *data, uint32_t capacity) {
+hostmem_result hostmem_init_arena_borrow(hostmem *memory, uint8_t *data, uint32_t capacity) {
   if (!memory || !data) { return HOSTMEM_ERROR_NULL_POINTER; }
   uint32_t aligned_capacity;
-  if (!align8_u32(capacity, &aligned_capacity)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(capacity, &aligned_capacity)) {
+    return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
+  }
   // Rejected, not rounded: an unaligned base would break the "every pointer is 8 byte
   // aligned" invariant, and a rounded up capacity would let the arena bump past the end of
   // a buffer the caller sized exactly.
@@ -149,7 +148,7 @@ hostmem_result hostmem_alloc(uint8_t **buffer, uint32_t size, hostmem *memory) {
 
   // align with 8 Bytes
   uint32_t aligned_size;
-  if (!align8_u32(size, &aligned_size)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(size, &aligned_size)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
   if (account_capacity_exceeded(aligned_size, memory)) { return HOSTMEM_ERROR_OUT_OF_MEMORY; }
 
   // last_index is already a multiple of 8, so no padding is needed here
@@ -163,8 +162,12 @@ hostmem_result hostmem_realloc(
 ) {
   if (!buffer) { return HOSTMEM_ERROR_NULL_POINTER; }
   uint32_t new_size_aligned, old_size_aligned;
-  if (!align8_u32(new_size, &new_size_aligned)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
-  if (!align8_u32(old_size, &old_size_aligned)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(new_size, &new_size_aligned)) {
+    return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
+  }
+  if (!hostmem_align8_u32(old_size, &old_size_aligned)) {
+    return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW;
+  }
 
   // release on hostmem_free's terms and with its return value, so that freeing through here and
   // calling hostmem_free directly cannot drift apart. An empty buffer takes the same route.
@@ -238,7 +241,7 @@ hostmem_result hostmem_free(uint8_t *buffer, uint32_t size, hostmem *memory) {
   }
 
   uint32_t aligned_size;
-  if (!align8_u32(size, &aligned_size)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
+  if (!hostmem_align8_u32(size, &aligned_size)) { return HOSTMEM_ERROR_ARITHMETIC_OVERFLOW; }
   if (is_reclaimable(buffer, aligned_size, memory)) {
     memory->last_index -= aligned_size;
     return HOSTMEM_SUCCESS;

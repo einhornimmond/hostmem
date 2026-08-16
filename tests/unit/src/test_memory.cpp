@@ -5,9 +5,58 @@
 #include <cstdlib>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <utility>
 
 // The arena rounds every size up to a multiple of 8, so a request of `n` moves the
 // bump index by HOSTMEM_ALIGN8(n). Tests that check `last_index` state that explicitly.
+
+TEST(MemoryTest, Align8RoundsUpAndRefusesToWrap) {
+  uint32_t aligned = 0xDEADBEEF;
+
+  // 0 is allowed and stays 0; hostmem_alloc rejects it on its own terms, not here
+  ASSERT_TRUE(hostmem_align8_u32(0, &aligned));
+  EXPECT_EQ(aligned, 0u);
+
+  for (const auto &c : {std::pair<uint32_t, uint32_t>{1, 8}, {3, 8}, {8, 8}, {9, 16}, {99, 104}}) {
+    ASSERT_TRUE(hostmem_align8_u32(c.first, &aligned)) << c.first;
+    EXPECT_EQ(aligned, c.second) << c.first;
+  }
+
+  // the ceiling is a multiple of 8 already, so it survives the rounding untouched
+  ASSERT_TRUE(hostmem_align8_u32(HOSTMEM_MAX_ALLOC_SIZE, &aligned));
+  EXPECT_EQ(aligned, HOSTMEM_MAX_ALLOC_SIZE);
+
+  // one byte more cannot be rounded without wrapping, and the output stays as it was
+  aligned = 0xDEADBEEF;
+  EXPECT_FALSE(hostmem_align8_u32(HOSTMEM_MAX_ALLOC_SIZE + 1, &aligned));
+  EXPECT_FALSE(hostmem_align8_u32(UINT32_MAX, &aligned));
+  EXPECT_EQ(aligned, 0xDEADBEEFu);
+}
+
+TEST(MemoryTest, Align8IsTheFigureTheArenaActuallyReserves) {
+  // The reason this rounding is shared rather than copied: what it returns has to be what the
+  // bump index moves by, or freeing with the caller's size would move it back by the wrong
+  // amount. Checked against the arena instead of against the formula.
+  alignas(8) uint8_t storage[256];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+
+  for (uint32_t request : {1u, 7u, 8u, 9u, 31u, 32u}) {
+    uint32_t expected = 0;
+    ASSERT_TRUE(hostmem_align8_u32(request, &expected));
+
+    const uint32_t before = arena.last_index;
+    uint8_t *block = nullptr;
+    ASSERT_EQ(hostmem_alloc(&block, request, &arena), HOSTMEM_SUCCESS) << request;
+    EXPECT_EQ(arena.last_index - before, expected) << request;
+
+    // and back again with the size the caller passed, which is where the two must agree
+    ASSERT_EQ(hostmem_free(block, request, &arena), HOSTMEM_SUCCESS) << request;
+    EXPECT_EQ(arena.last_index, before) << request;
+  }
+
+  hostmem_release(&arena);
+}
 
 TEST(MemoryTest, DynamicAreaAllocation) {
   // init
@@ -47,18 +96,18 @@ TEST(MemoryTest, InitArenaStaticRejectsWhatItCannotHonour) {
   alignas(8) uint8_t storage[64];
   hostmem mem{};
 
-  EXPECT_EQ(hostmem_init_arena_static(&mem, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
-  EXPECT_EQ(hostmem_init_arena_static(&mem, storage, 0), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_init_arena_borrow(&mem, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_init_arena_borrow(&mem, storage, 0), HOSTMEM_ERROR_INVALID_PARAM);
   // an unaligned base would break the "every pointer is 8 byte aligned" invariant
-  EXPECT_EQ(hostmem_init_arena_static(&mem, storage + 1, 32), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_init_arena_borrow(&mem, storage + 1, 32), HOSTMEM_ERROR_INVALID_PARAM);
   // and a capacity that is not a multiple of 8 is refused rather than rounded up: rounding
   // would let the arena hand out bytes past the end of a buffer the caller sized exactly
   for (uint32_t bad : {1u, 7u, 33u, 63u}) {
-    EXPECT_EQ(hostmem_init_arena_static(&mem, storage, bad), HOSTMEM_ERROR_INVALID_PARAM)
+    EXPECT_EQ(hostmem_init_arena_borrow(&mem, storage, bad), HOSTMEM_ERROR_INVALID_PARAM)
         << "capacity " << bad;
   }
 
-  ASSERT_EQ(hostmem_init_arena_static(&mem, storage, 64), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&mem, storage, 64), HOSTMEM_SUCCESS);
   EXPECT_EQ(mem.allocation_type, HOSTMEM_ALLOC_TYPE_ARENA_EXTERNAL);
   EXPECT_EQ(mem.capacity, 64u);
 
@@ -81,11 +130,11 @@ TEST(MemoryTest, InitArenaStaticCanBeRepeatedWithoutFreeing) {
   alignas(8) uint8_t second[128];
   hostmem mem{};
 
-  ASSERT_EQ(hostmem_init_arena_static(&mem, first, sizeof(first)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&mem, first, sizeof(first)), HOSTMEM_SUCCESS);
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_alloc(&buffer, 32, &mem), HOSTMEM_SUCCESS);
 
-  ASSERT_EQ(hostmem_init_arena_static(&mem, second, sizeof(second)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&mem, second, sizeof(second)), HOSTMEM_SUCCESS);
   EXPECT_EQ(mem.capacity, 128u);
   EXPECT_EQ(mem.last_index, 0u);
   ASSERT_EQ(hostmem_alloc(&buffer, 128, &mem), HOSTMEM_SUCCESS);
@@ -951,7 +1000,7 @@ TEST(MemoryBlockTest, CloneLeavesDestinationAloneOnFailure) {
 TEST(MemoryBlockTest, ReleasesUnusedScratchTail) {
   alignas(8) uint8_t storage[256];
   hostmem mem{};
-  ASSERT_EQ(hostmem_init_arena_static(&mem, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_init_arena_borrow(&mem, storage, sizeof(storage)), HOSTMEM_SUCCESS);
 
   hostmem_memory_block keep{};
   ASSERT_EQ(hostmem_memory_block_alloc(&keep, 16, &mem), HOSTMEM_SUCCESS);

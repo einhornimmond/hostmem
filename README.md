@@ -13,7 +13,7 @@ its own: you hand it a blob, it works inside that blob, and it gives the blob ba
 
 uint8_t blob[64 * 1024];          // wherever this comes from: the host decides
 hostmem mem;
-hostmem_init_arena_static(&mem, blob, sizeof(blob));
+hostmem_init_arena_borrow(&mem, blob, sizeof(blob));
 
 uint8_t *buffer = NULL;
 hostmem_alloc(&buffer, 128, &mem);
@@ -64,8 +64,10 @@ refusal.
 #include "hostmem/multi_arena.h"
 
 hostmem_multi_arena chain;
-hostmem_multi_arena_init(&chain, 1024 * 1024, NULL);   // 1 MiB per arena, 0 for the default
-hostmem_multi_arena_adopt(&chain, blob, sizeof(blob)); // optional: fill the host's blob first
+// 1 MiB per arena, and an arena drops out of the search once under 4 KiB is left.
+// 0 for either takes the default: 1 MiB and 128 bytes.
+hostmem_multi_arena_init(&chain, 1024 * 1024, 4096, NULL);
+hostmem_multi_arena_borrow(&chain, blob, sizeof(blob)); // optional: lend it the host's blob
 
 uint8_t *buffer = NULL;
 hostmem_multi_arena_alloc(&buffer, 4096, &chain);
@@ -75,8 +77,21 @@ hostmem_multi_arena_shrink(&chain);   // and give the empty ones back to the hos
 hostmem_multi_arena_release(&chain);
 ```
 
-Pointers stay put: an arena, once opened, is never moved or resized. Adopted blocks are
-borrowed, never freed. `NULL` is not a malloc fallback here — a chain has to exist.
+Pointers stay put: an arena, once opened, is never moved or resized. A borrowed block stays
+the host's: the chain fills it and never frees it. `NULL` is not a malloc fallback here — a chain has to exist.
+
+The third argument is the one worth thinking about. A request is served first fit, and an arena
+leaves that search for good once its remainder falls to the threshold. So the question it
+answers is: what is the smallest request that should still land in a leftover? An arena holds a
+request of `n` bytes while at least `n` are left, and is written off at or below the threshold,
+so `n - 8` drops it out of the search exactly when it can no longer take that request.
+
+For uniform records that is the whole story — one alignment step below the record size wastes
+nothing and keeps the search short. For mixed sizes it is a trade: lower gives up nothing usable
+but leaves arenas in the search holding remainders only the small requests fit, at around half a
+nanosecond per arena walked, which only bites once a thousand of them have piled up; higher
+keeps the search short and writes off up to a threshold worth of bytes per arena.
+`bench_multi_arena` puts numbers on both ends.
 
 ## Build
 

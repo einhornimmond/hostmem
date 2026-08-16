@@ -34,11 +34,33 @@ extern "C" {
  * ### Where an allocation lands
  *
  * First fit, scanned from the earliest arena that may still have room. That front marker only
- * walks forward — past arenas whose remainder has fallen to
- * @ref HOSTMEM_MULTI_ARENA_FULL_REMAINING or below — so a long lived allocator does not re-walk
- * the arenas it filled years of allocations ago. The scan is O(1) amortized, O(open arenas) in
- * the worst case, when many arenas hold a remainder too small for the current request but too
- * large to be called full.
+ * walks forward — past arenas whose remainder has fallen to the chain's full threshold or below
+ * — so a long lived allocator does not re-walk the arenas it filled years of allocations ago.
+ * The scan is O(1) amortized, O(open arenas) in the worst case, when many arenas hold a
+ * remainder too small for the current request but too large to be called full.
+ *
+ * ### The full threshold
+ *
+ * That worst case is the one figure worth tuning, and it is named at init:
+ * @p full_remaining says how many bytes an arena may keep and still be written off. Every
+ * arena whose remainder falls to it drops out of the scan for good; every arena above it is
+ * walked over by each allocation that does not fit there.
+ *
+ * One question settles it: what is the smallest request this chain should still be able to place
+ * in a leftover? An arena serves a request of @c n bytes while its remainder is at least @c n,
+ * and is written off while its remainder is at most the threshold, so `n - 8` writes an arena
+ * off exactly when it can no longer hold that request — the size counted after rounding up to 8,
+ * the way the arenas count it.
+ *
+ * A chain fed uniform records therefore has nothing to trade: one alignment step below the
+ * record size is both the shortest scan and the smallest waste, because a leftover under one
+ * record can never serve anyone. A chain fed a spread of sizes has to choose, and every choice
+ * sits between two costs. Near the small end nothing usable is given up, and arenas linger in
+ * the scan holding remainders only the smallest requests can use — roughly half a nanosecond per
+ * arena walked, which is nothing until a thousand of them stand in the way. Near the large end
+ * the scan stays short, and up to a threshold worth of bytes per arena goes unused until the
+ * next reset. @ref hostmem_multi_arena_measure() reports what that came to: `reserved - used` is
+ * what the chain holds and does not hand out.
  *
  * ### Memory that comes back
  *
@@ -76,8 +98,14 @@ extern "C" {
 /** @brief Bytes a regular arena reserves when the caller names no capacity — 1 MiB. */
 #define HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY ((uint32_t)1 << 20)
 
-/** @brief Remainder at or below which an arena counts as full and the front marker passes it. */
-#define HOSTMEM_MULTI_ARENA_FULL_REMAINING ((uint32_t)128)
+/**
+ * @brief Full threshold a chain uses when the caller names none — 128 bytes.
+ *
+ * An arena leaves the scan once fewer than 136 bytes are left in it, a remainder always being a
+ * multiple of 8. That fits a chain of small structs and short strings and gives up little of
+ * what it writes off. Name a threshold at init once the request sizes are known.
+ */
+#define HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING ((uint32_t)128)
 
 /** @brief Arena descriptors per bucket of the descriptor vector. */
 #define HOSTMEM_MULTI_ARENA_BUCKET_LOG2 6
@@ -102,6 +130,7 @@ HOSTMEM_BVEC_DECLARE(hostmem_arena_vec, hostmem, HOSTMEM_MULTI_ARENA_BUCKET_LOG2
 typedef struct hostmem_multi_arena {
   hostmem_arena_vec arenas; /**< Every arena, oldest first. Never reordered. */
   uint32_t arena_capacity;  /**< Bytes a regular arena reserves; 0 means the default. */
+  uint32_t full_remaining;  /**< Remainder that counts as used up; 0 means the default. */
   uint32_t first_open;      /**< Earliest arena that may still have room; only walks forward. */
 } hostmem_multi_arena;
 
@@ -110,7 +139,7 @@ typedef struct hostmem_multi_arena_stats {
   uint64_t reserved;    /**< Bytes held from the host: the capacities of all arenas. */
   uint64_t used;        /**< Bytes handed out, rounded up to 8 the way the arenas count them. */
   uint32_t arena_count; /**< Arenas in the chain. */
-  uint32_t open_count;  /**< Arenas with more than @ref HOSTMEM_MULTI_ARENA_FULL_REMAINING left. */
+  uint32_t open_count;  /**< Arenas holding more than the chain's full threshold. */
 } hostmem_multi_arena_stats;
 
 // ********** manage the allocator itself *******************
@@ -125,32 +154,47 @@ typedef struct hostmem_multi_arena_stats {
  * @param[in]     arena_capacity Bytes a regular arena reserves, rounded up to 8. 0 selects
  *                               @ref HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY. A single request
  *                               larger than this still gets an arena of its own.
+ * @param[in]     full_remaining Bytes an arena may keep and still be written off, taking it out
+ *                               of the first fit scan for good. 0 selects
+ *                               @ref HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING. Set it one
+ *                               alignment step below the smallest request this chain should
+ *                               still place in a leftover — see the module text on what moving
+ *                               it in either direction costs.
  * @param[in]     bookkeeping    Allocator for the descriptor vector, or NULL for malloc/free.
  *                               The arenas themselves are always owned heap blocks.
  * @retval HOSTMEM_SUCCESS                  Chain ready, no arena open.
  * @retval HOSTMEM_ERROR_NULL_POINTER       @p m is NULL.
  * @retval HOSTMEM_ERROR_ARITHMETIC_OVERFLOW Rounding @p arena_capacity up to 8 would wrap.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM      @p full_remaining reaches the effective arena
+ *                                          capacity, which would write every arena off at birth
+ *                                          and give each allocation an arena of its own.
  * @warning Calling this on a chain that already holds arenas leaks them. Use
  *          hostmem_multi_arena_release() first.
  * @note An arena as @p bookkeeping cannot reclaim a superseded index array, so
  *       hostmem_multi_arena_reserve() up front is worth it there.
+ * @note A remainder is always a multiple of 8, so only multiples of 8 are distinguishable here:
+ *       a threshold of 130 acts exactly like 128. Passing 0 asks for the default rather than for
+ *       "write nothing off"; a chain that wants every last byte chased passes 8.
  * @whisper The first basin is not dug until someone asks for water
  */
 hostmem_result hostmem_multi_arena_init(
-    hostmem_multi_arena *m, uint32_t arena_capacity, hostmem *bookkeeping
+    hostmem_multi_arena *m, uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
 );
 
 /**
  * @brief Allocate a chain on the heap and initialize it.
  *
  * @param[in] arena_capacity As in hostmem_multi_arena_init().
+ * @param[in] full_remaining As in hostmem_multi_arena_init().
  * @param[in] bookkeeping    As in hostmem_multi_arena_init().
- * @return Initialized allocator, or NULL when the heap is exhausted or @p arena_capacity cannot
- *         be rounded up to 8.
+ * @return Initialized allocator, or NULL when the heap is exhausted or hostmem_multi_arena_init()
+ *         refused the arguments.
  * @note Pair with hostmem_multi_arena_destroy().
  * @whisper A vessel for vessels, itself drawn from the stream
  */
-hostmem_multi_arena *hostmem_multi_arena_create(uint32_t arena_capacity, hostmem *bookkeeping);
+hostmem_multi_arena *hostmem_multi_arena_create(
+    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
+);
 
 /**
  * @brief Make room in the descriptor vector for @p arena_count arenas.
@@ -170,14 +214,15 @@ hostmem_multi_arena *hostmem_multi_arena_create(uint32_t arena_capacity, hostmem
 hostmem_result hostmem_multi_arena_reserve(hostmem_multi_arena *m, uint32_t arena_count);
 
 /**
- * @brief Append a caller owned buffer to the chain as one more arena.
+ * @brief Borrow a caller owned buffer and append it to the chain as one more arena.
  *
- * The block is borrowed, never freed: hostmem_multi_arena_release() lets it go untouched and
- * hostmem_multi_arena_shrink() stops at it rather than dropping it. This is how a host feeds
- * its own storage into the chain and keeps ownership of it.
+ * The same borrowing hostmem_init_arena_borrow() does for a single arena, one link further out:
+ * the block is filled but never freed. hostmem_multi_arena_release() lets it go untouched and
+ * hostmem_multi_arena_shrink() stops at it rather than dropping it, so a host can feed its own
+ * storage into the chain and keep ownership of it.
  *
  * The arena joins at the end, so it is used only once the arenas before it can no longer serve
- * a request. Adopt before the first allocation to have it filled first.
+ * a request. Borrow before the first allocation to have it filled first.
  *
  * @param[in,out] m        Allocator to extend; not NULL.
  * @param[in]     data     Buffer to bump through; not NULL, 8 byte aligned (@c alignas(8)).
@@ -190,7 +235,7 @@ hostmem_result hostmem_multi_arena_reserve(hostmem_multi_arena *m, uint32_t aren
  * @note @p data must outlive the chain, or be released from it by hostmem_multi_arena_release().
  * @whisper Borrowed ground joins the path, and stays borrowed
  */
-hostmem_result hostmem_multi_arena_adopt(hostmem_multi_arena *m, uint8_t *data, uint32_t capacity);
+hostmem_result hostmem_multi_arena_borrow(hostmem_multi_arena *m, uint8_t *data, uint32_t capacity);
 
 /**
  * @brief Drop every allocation in every arena, keeping the arenas. O(arena count).
@@ -227,7 +272,7 @@ hostmem_result hostmem_multi_arena_shrink(hostmem_multi_arena *m);
 /**
  * @brief Release every arena and the bookkeeping, but not the descriptor itself.
  *
- * Owned arenas are freed, adopted ones are let go untouched, and the descriptor is left in the
+ * Owned arenas are freed, borrowed ones are let go untouched, and the descriptor is left in the
  * empty state with its arena capacity kept — ready to be filled again from nothing.
  *
  * @param[in,out] m Allocator to empty; may be NULL.
@@ -248,7 +293,7 @@ void hostmem_multi_arena_destroy(hostmem_multi_arena *m);
  * @brief Number of arenas in the chain.
  *
  * @param[in] m Allocator to query; may be NULL.
- * @return Arenas opened and adopted and not yet released, or 0 if @p m is NULL.
+ * @return Arenas opened and borrowed and not yet released, or 0 if @p m is NULL.
  */
 static inline uint32_t hostmem_multi_arena_arena_count(const hostmem_multi_arena *m) {
   return m ? hostmem_arena_vec_size(&m->arenas) : 0;
