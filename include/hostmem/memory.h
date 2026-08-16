@@ -98,13 +98,23 @@ typedef struct hostmem {
 
 // ********** manage memory allocator themself *******************
 
-/** @brief Allocate and zero a hostmem on the heap, ready for an init call.
+/** @brief Allocate and zero a hostmem, ready for an init call.
  *
- *  @return Zeroed allocator in default mode, or NULL when the heap is exhausted.
- *  @note Pair with hostmem_destroy().
- *  @whisper A vessel for vessels, itself drawn from the stream
+ *  The descriptor is a struct like any other, so the host may say where it lives: @p allocator
+ *  carves it out of an arena, NULL takes it from malloc. A binding that keeps every byte of this
+ *  library inside one blob it owns needs this -- otherwise the allocator itself would be the one
+ *  allocation that escaped.
+ *
+ *  @param[in,out] allocator Allocator to take the descriptor from, or NULL for malloc.
+ *  @return Zeroed allocator in default mode, or NULL when @p allocator had no room.
+ *  @note Pair with hostmem_destroy() **and hand it the same @p allocator** -- the descriptor is
+ *        returned on that allocator's terms, and a different one moves the wrong bump index.
+ *        Sizes are passed in and never stored here; so is this.
+ *  @note An arena hands out 8 byte aligned blocks, which is what this struct needs. A payload
+ *        wanting more would need an externally aligned arena.
+ *  @whisper A vessel for vessels, drawn from whichever stream the host points to
  */
-hostmem *hostmem_create();
+hostmem *hostmem_create(hostmem *allocator);
 
 /** @brief Initialize arena mode with an owned heap buffer.
  *
@@ -196,12 +206,21 @@ static inline hostmem_result hostmem_reinit_arena(hostmem *memory, uint32_t capa
   return hostmem_init_arena(memory, capacity);
 }
 
-/** @brief hostmem_release(), then release the hostmem itself.
+/** @brief hostmem_release(), then give the hostmem descriptor itself back.
  *
- *  @param[in] memory From hostmem_create(), never stack or static storage; may be NULL.
- *  @whisper The vessel that held vessels returns to the stream
+ *  @param[in]     memory    From hostmem_create(), never stack or static storage; may be NULL.
+ *  @param[in,out] allocator The allocator @p memory came from -- the same one hostmem_create()
+ *                           was handed, NULL for malloc.
+ *  @retval HOSTMEM_SUCCESS  Released, or @p memory was NULL and there was nothing to do.
+ *  @retval HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED @p allocator is an arena and this
+ *                           descriptor is not its most recent allocation. Everything it held is
+ *                           released either way; only its own bytes stay until that arena's
+ *                           reset. Not a failure, and not a reason to call this twice.
+ *  @warning An @p allocator other than the one that handed the descriptor out moves the wrong
+ *           bump index and hands the same bytes out twice.
+ *  @whisper The vessel that held vessels returns to the stream it came from
  */
-void hostmem_destroy(hostmem *memory);
+hostmem_result hostmem_destroy(hostmem *memory, hostmem *allocator);
 
 /** @brief Bytes worth of requests that did not fit since the last reset.
  *
