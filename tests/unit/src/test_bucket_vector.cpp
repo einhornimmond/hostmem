@@ -32,7 +32,7 @@ namespace {
  * Largest element count `_reserve` still admits for a payload of @p T.
  *
  * Beyond it either the payload would leave the allocator's uint32_t or rounding up to whole
- * buckets would wrap — one bound covers both, and this mirrors it, so the tests can step over
+ * buckets would wrap -- one bound covers both, and this mirrors it, so the tests can step over
  * the edge from either side.
  *
  * @param bucket_mask The generated `name##_BUCKET_MASK` of the container under test.
@@ -336,8 +336,11 @@ TEST(BucketVectorZeroInit, ZeroedDescriptorAnswersEveryReadPath) {
   EXPECT_EQ(u32_vec_at(&v, 0), nullptr);
   EXPECT_EQ(u32_vec_at(&v, 12345), nullptr);
   EXPECT_EQ(u32_vec_pop(&v), HOSTMEM_ERROR_ARRAY_INDEX_OUT_OF_BOUNDS);
-  uint32_t sink = 0;
-  EXPECT_EQ(u32_vec_copy_to(&v, &sink, 1), HOSTMEM_SUCCESS); // nothing to copy, no read of buckets
+  // capacity 1 is what is under test -- an empty vector fits any destination. The array behind
+  // it is a whole bucket wide only so that gcc, which inlines _copy_to and reasons about the
+  // loop body it can never reach here, has nothing to warn about.
+  uint32_t sink[u32_vec_BUCKET_CAPACITY] = {0};
+  EXPECT_EQ(u32_vec_copy_to(&v, sink, 1), HOSTMEM_SUCCESS); // nothing to copy, no read of buckets
   ASSERT_NO_FATAL_FAILURE(CheckInvariants(v, u32_vec_BUCKET_CAPACITY));
 
   // the first push has to open the first bucket instead of writing through the null tail
@@ -494,7 +497,7 @@ TEST(BucketVectorShrink, IsIdempotentAndNullSafe) {
 }
 
 TEST(BucketVectorShrink, DefaultModeAllocatorReclaims) {
-  // a hostmem in default mode frees each block individually, so shrinking pays off — and
+  // a hostmem in default mode frees each block individually, so shrinking pays off -- and
   // this is the one path where the superseded index array is really handed back
   hostmem heap{}; // zeroed is default mode: malloc/free
 
@@ -532,7 +535,7 @@ TEST(BucketVectorShrink, ArenaReclaimsWhatItCanAndStopsThere) {
   const uint32_t arena_before = arena.last_index;
 
   // An arena only gives back its most recent allocation, so _shrink unwinds from the top
-  // and stops at the first bucket it cannot reclaim — here the index array, which was
+  // and stops at the first bucket it cannot reclaim -- here the index array, which was
   // re-allocated part way through the growth and now sits between the buckets.
   EXPECT_EQ(u32_vec_shrink(&v), HOSTMEM_SUCCESS);
   EXPECT_LT(v.bucket_count, buckets_before);
@@ -578,7 +581,7 @@ TEST(BucketVectorShrink, ArenaTailBucketsComeBack) {
 TEST(BucketVectorShrink, RefusedTighteningKeepsPointerAndSize) {
   // A shrink the arena will not honour must change nothing at all. The recorded capacity is
   // the size the index array was allocated with, and it is what every later free and resize
-  // has to be told — a capacity that drifts below the real one strands the block for good.
+  // has to be told -- a capacity that drifts below the real one strands the block for good.
   alignas(8) uint8_t storage[8192];
   hostmem arena{};
   ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
@@ -651,7 +654,7 @@ TEST(BucketVectorShrink, WhatTheArenaRefusedComesBackLater) {
 
 TEST(BucketVectorShrink, BuriedGrowthRecordsTheNewBlock) {
   // The other half of the warning: a buried index array cannot grow in place, so the arena
-  // hands out a fresh block and copies. The resize did happen — the descriptor has to follow
+  // hands out a fresh block and copies. The resize did happen -- the descriptor has to follow
   // the new address and the new capacity, or every bucket pointer is read from stale memory.
   alignas(8) uint8_t storage[8192];
   hostmem arena{};
@@ -713,7 +716,7 @@ TEST(BucketVectorShrink, HoldsInvariantsThroughRandomShrinking) {
 
 namespace {
 
-/** Compare the whole sequence — through every read path the API offers. */
+/** Compare the whole sequence -- through every read path the API offers. */
 void ExpectMatches(const u32_vec &v, const std::vector<uint32_t> &ref) {
   ASSERT_EQ(u32_vec_size(&v), ref.size());
   if (ref.empty()) {
@@ -961,7 +964,7 @@ TEST(BucketVectorLimits, ReserveHugeFailsWithoutDamage) {
   EXPECT_EQ(u32_vec_reserve(&v, UINT32_MAX / 3), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW);
   // Counts the guard *does* allow are only ever exercised here, against a bounded arena:
   // asking malloc for them would spend the machine's RAM before returning. The first of them
-  // sits exactly on the edge — one more and the guard above would have caught it.
+  // sits exactly on the edge -- one more and the guard above would have caught it.
   EXPECT_EQ(
       u32_vec_reserve(&v, MaxReserve<uint32_t>(u32_vec_BUCKET_MASK)), HOSTMEM_ERROR_OUT_OF_MEMORY
   );
@@ -978,7 +981,7 @@ TEST(BucketVectorLimits, ReserveHugeFailsWithoutDamage) {
 
 TEST(BucketVectorLimits, IndexCapacityFollowsTheAllocatorsCeiling) {
   // The index array is one allocation, so its slot count is bounded by what hostmem will hand
-  // out — not by half the width of the counter. These two must not drift apart, which is the
+  // out -- not by half the width of the counter. These two must not drift apart, which is the
   // whole point of deriving one from the other.
   static_assert(
       HOSTMEM_BVEC_MAX_INDEX_CAPACITY == HOSTMEM_MAX_ALLOC_SIZE / sizeof(void *),
@@ -1109,7 +1112,7 @@ TEST(BucketVectorLimits, FreeAfterHeavyUseResetsEverything) {
 
   // The same has to hold for an attached arena: _free returns the descriptor to the empty
   // state _init writes, and the allocator has to survive that passage. A lost one would go
-  // unnoticed with malloc — here the next bucket has to come out of the caller's storage.
+  // unnoticed with malloc -- here the next bucket has to come out of the caller's storage.
   alignas(8) uint8_t storage[4096];
   hostmem arena{};
   ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
@@ -1250,7 +1253,7 @@ constexpr int kPerfRepeats = 5;
 constexpr uint32_t kPerfStride = 524287;
 
 /**
- * Run @p fn a few times and keep the fastest — the run least disturbed by the machine.
+ * Run @p fn a few times and keep the fastest -- the run least disturbed by the machine.
  *
  * One untimed warm-up runs first. Without it the first measurement carries the cost of the
  * heap growing into a size it has never held, which says more about the allocator's history
@@ -1398,7 +1401,7 @@ TEST(BucketVectorPerformance, Append) {
       n
   );
 
-  // std::array is fixed size — no growth, no allocation, the floor this can be measured against
+  // std::array is fixed size -- no growth, no allocation, the floor this can be measured against
   const double ns_array = MeasureBestNs(
       [&] {
         auto a = std::make_unique<std::array<uint64_t, kPerfElements>>();

@@ -32,7 +32,7 @@ extern "C" {
  *
  * @return
  *   Characters written (excluding '\0'). If buffer is too small, returns
- *   the length that would have been needed — a hint for the caller.
+ *   the length that would have been needed -- a hint for the caller.
  *
  * @whisper Number becomes word, digit by digit
  */

@@ -10,7 +10,7 @@
  * Bump allocator: `last_index` walks forward through `data` and only walks back for the
  * block sitting right at it. Two invariants keep that cheap and every pointer 8 byte
  * aligned: `data` is aligned (malloc guarantees it, init_arena_borrow checks it), and
- * every size that moves the index goes through hostmem_align8_u32 first — both directions.
+ * every size that moves the index goes through hostmem_align8_u32 first -- both directions.
  *
  * So no allocation needs padding, and alloc/free/realloc must agree on the *aligned*
  * size. A wrong old_size from a caller corrupts the arena. That rounding lives in memory.h
@@ -41,7 +41,7 @@ static bool is_reclaimable(const uint8_t *buffer, uint32_t aligned_size, const h
 }
 
 // True if the request runs past the end. Records the shortfall for
-// hostmem_overflow_total(), saturating — a counter that rolls over to a small number
+// hostmem_overflow_total(), saturating -- a counter that rolls over to a small number
 // is worse than one that is capped.
 static bool account_capacity_exceeded(uint32_t aligned_size, hostmem *memory) {
   // no underflow: last_index never passes capacity

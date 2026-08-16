@@ -11,7 +11,7 @@
 
 // Small arenas on purpose: every test crosses an arena boundary. The capacity stays well above
 // the full threshold, or an arena would count as full the moment it opens and each allocation
-// would get one of its own — which init refuses outright.
+// would get one of its own -- which init refuses outright.
 //
 // The 0 threaded through every init call is the full threshold, left at
 // HOSTMEM_MULTI_ARENA_DEFAULT_FULL_REMAINING (128); the tests that mean to tune it say so.
@@ -24,7 +24,7 @@ void ExpectAligned(const uint8_t *p) {
   EXPECT_EQ(reinterpret_cast<uintptr_t>(p) % 8, 0u);
 }
 
-/** Figures of a chain, or a zeroed set when the call fails — keeps the tests to one line. */
+/** Figures of a chain, or a zeroed set when the call fails -- keeps the tests to one line. */
 hostmem_multi_arena_stats Measure(const hostmem_multi_arena *m) {
   hostmem_multi_arena_stats stats{};
   EXPECT_EQ(hostmem_multi_arena_measure(m, &stats), HOSTMEM_SUCCESS);
@@ -52,7 +52,7 @@ TEST(MultiArena, EmptyAfterInit) {
 }
 
 TEST(MultiArena, ZeroInitializedIsUsable) {
-  // no init call at all: the empty state is all zeroes, and the defaults apply — both the
+  // no init call at all: the empty state is all zeroes, and the defaults apply -- both the
   // capacity and the full threshold read a 0 field that way
   hostmem_multi_arena m{};
   uint8_t *buffer = nullptr;
@@ -157,7 +157,7 @@ TEST(MultiArena, ASmallThresholdKeepsAnArenaInTheScan) {
 TEST(MultiArena, AThresholdOneStepBelowTheRequestIsTheExactLine) {
   // What the module text rests on: an arena serves a request of n while n bytes are left, and is
   // written off at or below the threshold. n - 8 is therefore the value that writes it off
-  // exactly when it can no longer take that request — n itself already gives up one request's
+  // exactly when it can no longer take that request -- n itself already gives up one request's
   // worth per arena. Both chains are left with exactly 256 bytes, and only the choice differs.
   constexpr uint32_t kRequest = 256;
   hostmem_multi_arena exact, one_step_high;
@@ -201,7 +201,7 @@ TEST(MultiArena, AThresholdOneStepBelowTheRequestIsTheExactLine) {
 }
 
 TEST(MultiArena, ZeroSelectsTheDefaultThreshold) {
-  // 0 asks for the default, not for "write nothing off" — the two chains must behave alike
+  // 0 asks for the default, not for "write nothing off" -- the two chains must behave alike
   hostmem_multi_arena zero, named;
   ASSERT_EQ(hostmem_multi_arena_init(&zero, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
   ASSERT_EQ(
@@ -289,7 +289,7 @@ TEST(MultiArena, SizesRoundUpToEight) {
   uint8_t *second = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&first, 1, &m), HOSTMEM_SUCCESS);
   ASSERT_EQ(hostmem_multi_arena_alloc(&second, 1, &m), HOSTMEM_SUCCESS);
-  // one byte asked for, eight reserved — twice
+  // one byte asked for, eight reserved -- twice
   EXPECT_EQ(second - first, 8);
   EXPECT_EQ(Measure(&m).used, 16u);
   ExpectAligned(first);
@@ -302,7 +302,7 @@ TEST(MultiArena, OpensAnotherArenaWhenTheCurrentOneIsFull) {
   hostmem_multi_arena m;
   ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
-  // 4 × 256 fills the first arena exactly
+  // 4 x 256 fills the first arena exactly
   std::vector<uint8_t *> blocks;
   for (int i = 0; i < 4; ++i) {
     uint8_t *buffer = nullptr;
@@ -385,7 +385,7 @@ TEST(MultiArena, AnArenaTooSmallForOneRequestStillServesTheNext) {
   hostmem_multi_arena m;
   ASSERT_EQ(hostmem_multi_arena_init(&m, kArenaCapacity, 0, nullptr), HOSTMEM_SUCCESS);
 
-  // leaves 512 bytes in arena 0 — above the full threshold, below the next request
+  // leaves 512 bytes in arena 0 -- above the full threshold, below the next request
   uint8_t *first = nullptr;
   ASSERT_EQ(hostmem_multi_arena_alloc(&first, 512, &m), HOSTMEM_SUCCESS);
 

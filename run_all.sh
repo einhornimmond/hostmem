@@ -7,8 +7,8 @@
 #   ./run_all.sh --tests             # skip the bench_* binaries
 #   ./run_all.sh -- --gtest_filter='*Arena*'    # pass arguments through to each binary
 #
-# A gtest binary reports a verdict, so only its failures are worth printing. Anything else —
-# the bench_* binaries — has its output *as* the result, so that is always shown. -v prints
+# A gtest binary reports a verdict, so only its failures are worth printing. Anything else --
+# the bench_* binaries -- has its output *as* the result, so that is always shown. -v prints
 # everything, -q only failures. Exits non-zero when any binary fails.
 
 set -uo pipefail
@@ -80,8 +80,8 @@ if [ -z "$DIR" ]; then
   done
 fi
 if [ -z "$DIR" ] || [ ! -d "$DIR" ]; then
-  echo "no build output found — looked for zig-out/bin" >&2
-  echo "build first, e.g.: zig build -Dtarget=x86_64-linux-gnu -Dtests=true -Dbenchmarks=true" >&2
+  echo "no build output found -- looked for zig-out/bin" >&2
+  echo "build first, e.g.: zig build -Dtests=true -Dbenchmarks=true" >&2
   exit 1
 fi
 

@@ -44,7 +44,7 @@ TEST(MemoryTest, AFailedAllocLeavesTheOutputPointerAlone) {
 TEST(MemoryTest, AFailedMallocLeavesTheOutputPointerAlone) {
   // The default path is where the promise is easy to lose: assigning malloc's result straight
   // into *buffer writes a NULL over whatever the caller held. Only a real refusal exercises it,
-  // and only the address space cap can promise one — without it Linux overcommit answers a
+  // and only the address space cap can promise one -- without it Linux overcommit answers a
   // 4 GiB request with an address, and this test would fail while leaking the block.
   constexpr unsigned long long kUnservable = HOSTMEM_MAX_ALLOC_SIZE;
   if (!HostmemTestAllocationMustFail(kUnservable)) {
@@ -604,7 +604,7 @@ TEST(MemoryTest, ReallocArenaNonTailGrowMovesAndWarns) {
   ASSERT_EQ(hostmem_alloc(&tail, 32, &mem), HOSTMEM_SUCCESS);
 
   uint8_t *before = first;
-  // the resize happened, the abandoned block did not come back — that is the warning
+  // the resize happened, the abandoned block did not come back -- that is the warning
   EXPECT_EQ(hostmem_realloc(&first, 32, 48, &mem), HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED);
   EXPECT_NE(first, before);
   for (size_t i = 0; i < 32; ++i) { EXPECT_EQ(first[i], 0x5A) << "at " << i; }
@@ -806,7 +806,7 @@ TEST(MemoryBlockTest, ReallocKeepsSizeAndPointerInStep) {
 
 TEST(MemoryBlockTest, ReallocRecordsTheNewSizeOnTheArenaWarning) {
   // the regression this guards: a warning is not a failure, so the descriptor has to
-  // follow the resize — otherwise data points at the new block and size at the old one
+  // follow the resize -- otherwise data points at the new block and size at the old one
   hostmem mem{};
   ASSERT_EQ(hostmem_init_arena(&mem, 256), HOSTMEM_SUCCESS);
 
@@ -820,7 +820,7 @@ TEST(MemoryBlockTest, ReallocRecordsTheNewSizeOnTheArenaWarning) {
   EXPECT_EQ(
       hostmem_memory_block_realloc(&first, 48, &mem), HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED
   );
-  // the block could not grow in place, so it moved — and the recorded size has to move with
+  // the block could not grow in place, so it moved -- and the recorded size has to move with
   // it, or the caller cannot use the space it just paid for
   EXPECT_NE(first.data, before);
   EXPECT_EQ(first.size, 48u);
@@ -835,13 +835,13 @@ TEST(MemoryBlockTest, ReallocRecordsTheNewSizeOnTheArenaWarning) {
 
 // The two buried-block resizes are where `size` earns its definition: it records what the
 // block was allocated with, because that is the number hostmem_free() is told later. Both tests
-// check the descriptor *and* then prove it by reclaiming — a descriptor that disagrees with
+// check the descriptor *and* then prove it by reclaiming -- a descriptor that disagrees with
 // the arena silently strands the block forever.
 
 TEST(MemoryBlockTest, ReallocToZeroIsInterchangeableWithFree) {
   // Sweeps every allocator state a release can start from and requires the two spellings to
   // agree on all of it: return value, descriptor, and what the arena took back. The empty
-  // arena case is the subtle one — NULL is never the tail, so both must report the warning.
+  // arena case is the subtle one -- NULL is never the tail, so both must report the warning.
   enum Scenario { ARENA_TAIL, ARENA_BURIED, ARENA_EMPTY, HEAP_BLOCK, HEAP_EMPTY };
   const char *names[] = {"arena tail", "arena buried", "arena empty", "heap block", "heap empty"};
 
@@ -929,7 +929,7 @@ TEST(MemoryBlockTest, ReallocBuriedShrinkKeepsTheRecordedSize) {
   ASSERT_EQ(hostmem_memory_block_alloc(&tail, 32, &mem), HOSTMEM_SUCCESS);
   uint8_t *before = victim.data;
 
-  // a buried shrink cannot reclaim, so literally nothing happens — and the descriptor must
+  // a buried shrink cannot reclaim, so literally nothing happens -- and the descriptor must
   // keep the size the arena reserved, not the smaller one the caller asked for
   EXPECT_EQ(
       hostmem_memory_block_realloc(&victim, 16, &mem), HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED
@@ -1087,7 +1087,7 @@ TEST(MemoryBlockTest, ReleasesUnusedScratchTail) {
 TEST(TestMemoryLimit, IsInEffectForThisBinary) {
   // memory_limit.h caps this process so a runaway allocation dies here instead of taking the
   // machine down. If that ever stops working, everything else still passes and nobody notices
-  // until the next 64 GB afternoon — so check it directly.
+  // until the next 64 GB afternoon -- so check it directly.
   const char *env = std::getenv("HOSTMEM_TEST_MEMORY_LIMIT_MB");
   if (env && std::string(env) == "0") { GTEST_SKIP() << "cap disabled via environment"; }
 

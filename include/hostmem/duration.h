@@ -25,7 +25,7 @@ typedef int64_t hostmem_duration;
  *
  * Takes a duration in nanoseconds and flows it into the most natural scale:
  * ns, us, ms, s, min, h, or days. The precision parameter shapes how many
- * decimal places settle into the output — truncated with clean edges, never rounded.
+ * decimal places settle into the output -- truncated with clean edges, never rounded.
  *
  * Writes into the provided buffer only if sufficient space exists.
  *

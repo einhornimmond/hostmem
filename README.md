@@ -110,18 +110,36 @@ keeps the search short and writes off up to a threshold worth of bytes per arena
 ## Build
 
 ```bash
-zig build -Dtarget=x86_64-linux-gnu                          # the static library
-zig build -Dtarget=x86_64-linux-gnu -Dtests=true -Dbenchmarks=true
+zig build                                                    # the static library, host target
+zig build -Dtests=true -Dbenchmarks=true
 ./run_all.sh                                                 # run everything in zig-out/bin
 ```
 
-`-Dtarget` is required. Further options: `-Dshared=true` for a dynamic library (what a
-language binding usually wants), `-Dsanitize=undefined_behavior`, `-DsingleOutputDir=true` to
-drop the artifacts without the `bin/` and `lib/` split.
+Options: `-Dtarget=` to cross compile, `-Dshared=true` for a dynamic library (what a language
+binding usually wants), `-Dsanitize=undefined_behavior`, `-DsingleOutputDir=true` to drop the
+artifacts without the `bin/` and `lib/` split.
 
 Targets verified to build: `x86_64-linux-gnu`, `x86_64-linux-musl`, `x86_64-windows-gnu`,
 `x86_64-macos`, `aarch64-macos`. The `-msvc` ABI targets need the MSVC SDK headers present on
 the machine — zig does not ship them, so that combination is untested here.
+
+Naming a target also side-steps an incomplete host toolchain: without `-Dtarget` zig compiles
+against the system headers in `/usr/include`, with one it uses the headers it ships itself. If
+a plain `zig build -Dtests=true` fails on something like a missing `asm/errno.h`, install your
+distribution's kernel headers or pass `-Dtarget=x86_64-linux-gnu`.
+
+That gap is what `CMakeLists.txt` is for: the MSVC ABI on Windows, and nothing else. `build.zig`
+stays the master build — CMake mirrors it and never leads it.
+
+```bash
+cmake -B build -DENABLE_TESTS=ON -DENABLE_BENCHMARKS=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release
+```
+
+`ENABLE_TESTS`, `ENABLE_BENCHMARKS`, `ENABLE_SANITIZERS` and `ENABLE_THREAD_SANITIZER` are the
+CMake spellings of the `-D` options above. AddressSanitizer is the one thing this route offers
+that zig cannot — zig ships no asan runtime, MSVC does.
 
 **Benchmark numbers need `-Doptimize=ReleaseFast`.** In a debug build the hand written digit
 loop loses to `snprintf` by a factor of two, because libc ships optimised and your build does

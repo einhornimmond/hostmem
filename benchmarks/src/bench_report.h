@@ -18,7 +18,7 @@
  *   all benchmarks: 1.0969 s, elements per step: 4000000
  *
  * Both time columns pick their own unit, so a step costing 19 ns and one costing 800 us are
- * equally readable — a fixed ns column would drown the second in digits.
+ * equally readable -- a fixed ns column would drown the second in digits.
  */
 
 #define BENCH_STRING_BUFFER_SIZE 32
@@ -28,7 +28,7 @@
 /*
  * Picks a unit for the per step figure and keeps one decimal at every scale. Not
  * hostmem_duration_string: that takes whole nanoseconds, and a step costing 4.2 ns would arrive
- * there as 4 — the fraction is the interesting part at this end of the range.
+ * there as 4 -- the fraction is the interesting part at this end of the range.
  */
 static inline void bench_per_step_string(char *buffer, size_t buffer_size, double nanos) {
   if (nanos < 1000.0) {
@@ -57,7 +57,7 @@ static inline void bench_section(const char *title) {
 /**
  * Runs one step and prints its row.
  *
- * @param unit  what a single step processed, e.g. "element" or "derivation" — it names the
+ * @param unit  what a single step processed, e.g. "element" or "derivation" -- it names the
  *              per step figure and reappears in bench_total().
  */
 static inline void bench_step(
@@ -89,8 +89,8 @@ static inline void bench_total(hostmem_mono_timer time_used, int step_count, con
  * Closing line for a run whose steps do not all share one count.
  *
  * The step count bench_total() prints says what a single step was, which only means something
- * when every step processed the same number of them. A file that mixes counts — because one
- * section costs orders of magnitude more per step than another — has no single figure to name
+ * when every step processed the same number of them. A file that mixes counts -- because one
+ * section costs orders of magnitude more per step than another -- has no single figure to name
  * there, and naming one anyway would misreport whichever section disagrees. Such a file states
  * the count in each section heading and closes with the wall clock alone.
  */

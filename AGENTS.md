@@ -11,15 +11,42 @@ are not negotiable; the rest is what saves you a wasted afternoon.
 
 ## Build and test
 
-zig only — there is no CMake here. **`-Dtarget` is mandatory**; a native build without it
-fails.
+**`build.zig` is the master build.** It defines the targets, the options and the matrix that
+gets verified; a change to the build belongs there first.
 
 ```bash
-zig build -Dtarget=x86_64-linux-gnu -Dtests=true -Dbenchmarks=true
+zig build -Dtests=true -Dbenchmarks=true      # host target, resolved by zig
 ./run_all.sh                 # every binary in zig-out/bin, one line each
 ./run_all.sh --tests         # skip the benchmarks
 ./lint.sh                    # format + the two structural checks below
 ```
+
+`-Dtarget` is for cross compiling and normally not needed — zig resolves the host on its own.
+It doubles as a workaround on a machine whose system headers are incomplete: a target-less
+build reaches into `/usr/include`, while a named target uses zig's own bundled headers. If
+`zig build -Dtests=true` dies on a missing header such as `asm/errno.h` while plain C compiles
+fine, that is the machine, not the project — pass `-Dtarget=x86_64-linux-gnu` and move on
+rather than "fixing" build.zig.
+
+`CMakeLists.txt` exists for the one case zig cannot serve: **the MSVC ABI on Windows**, whose
+SDK zig does not ship. It mirrors build.zig — same options under CMake spelling, same target
+set — and never leads it. When the two disagree, build.zig is right and the CMake side is the
+thing to fix. Three files, no deeper nesting: root, `benchmarks/`, `tests/`.
+
+```bash
+cmake -B build -DENABLE_TESTS=ON -DENABLE_BENCHMARKS=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release
+```
+
+Adding a source file needs nothing in CMake — all three globs pick up `src/*.c`,
+`benchmarks/src/bench_*.c` and `tests/unit/src/test_*.cpp`. Adding a *build option* means
+touching both files, and build.zig first.
+
+**Nothing in the library may assume clang.** That assumption used to sit in `mono_timer.c` as a
+`__int128` scaling step, which MSVC has no type for. Where a compiler extension looks tempting,
+write the arithmetic so that 64 bit suffices — one path every toolchain exercises beats a
+fallback only MSVC ever runs, which is a fallback nobody here can test.
 
 `lint.sh` walks `src/`, `include/`, `tests/unit/src/` and `benchmarks/src/` with `find`, so it
 covers `.c`, `.h` and `.cpp` at any depth. Do not replace that with a ladder of `src/**/*.c`
@@ -28,7 +55,7 @@ at a fixed depth and skips anything below it without a word.
 
 | Option | Meaning |
 |---|---|
-| `-Dtarget=` | required, e.g. `x86_64-linux-gnu`, `x86_64-linux-musl`, `x86_64-windows-gnu`, `aarch64-macos` |
+| `-Dtarget=` | cross compile; defaults to the host. e.g. `x86_64-linux-gnu`, `x86_64-linux-musl`, `x86_64-windows-gnu`, `aarch64-macos` |
 | `-Dtests=true` | build the googletest binaries |
 | `-Dbenchmarks=true` | build the `bench_*` binaries |
 | `-Dshared=true` | dynamic library — what a language binding usually wants |
@@ -79,6 +106,13 @@ below it belong to hostmem and may gain members between releases.
 Targets: Linux (glibc, musl), Windows (MinGW; the MSVC ABI needs the MSVC SDK present), macOS
 on both architectures. Never claim a target you did not build.
 
+- **Sources are ASCII only.** `.c`, `.h` and `.cpp` carry no byte above 0x7F, comments and
+  string literals included. What such a byte means is the compiler's decision, and MSVC reads a
+  file in the system codepage unless handed `/utf-8` — the same source then means something
+  different on another machine, or stops compiling with C4819. `lint.sh` fails on any
+  occurrence; clang-format has no say in it. The stand-ins read the same in a fixed width font:
+  `--` for an em dash, `...` for an ellipsis, `x` for a times sign. Markdown is exempt, being
+  prose no compiler reads.
 - **No C++ headers in C code.** `<cstdint>` in a `.c` file breaks every C compiler; use
   `<stdint.h>`.
 - **Every public header compiles on its own, as C and as C++.** `lint.sh` checks all of them —

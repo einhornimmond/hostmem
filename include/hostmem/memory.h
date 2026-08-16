@@ -27,7 +27,7 @@ extern "C" {
  *    8 byte aligned. One that would wrap uint32_t yields HOSTMEM_ERROR_ARITHMETIC_OVERFLOW.
  *  - An arena can only give back its most recent allocation; anything before it stays
  *    reserved until @ref hostmem_reset. Calls that could not reclaim return
- *    @ref HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED — the operation happened, the memory
+ *    @ref HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED -- the operation happened, the memory
  *    did not come back. Handle it explicitly; it is neither a failure nor a release.
  *  - Failures leave every output untouched.
  *
@@ -56,13 +56,13 @@ extern "C" {
  *  @ref HOSTMEM_ALIGN8 with the one check the bare macro cannot carry: a size above
  *  @ref HOSTMEM_MAX_ALLOC_SIZE would wrap on the way up, and wrapping here would hand back a
  *  number smaller than what was asked for. Every size that moves an arena's index passes through
- *  this, in both directions, so allocating and freeing agree on the aligned figure — and a caller
+ *  this, in both directions, so allocating and freeing agree on the aligned figure -- and a caller
  *  sizing a buffer ahead of time gets at the same number instead of reimplementing it.
  *
  *  @param[in]  size    Size to round up; 0 is allowed and yields 0.
  *  @param[out] aligned Receives the rounded size; not NULL. Untouched when the rounding wraps.
  *  @return true when @p aligned was written, false when @p size exceeds
- *          @ref HOSTMEM_MAX_ALLOC_SIZE — the callers turn that into
+ *          @ref HOSTMEM_MAX_ALLOC_SIZE -- the callers turn that into
  *          HOSTMEM_ERROR_ARITHMETIC_OVERFLOW.
  */
 static inline bool hostmem_align8_u32(uint32_t size, uint32_t *aligned) {
@@ -82,7 +82,7 @@ typedef enum hostmem_alloc_type {
 /** @brief Memory allocator state container.
  *
  *  The two init functions write every field and read none, so they accept uninitialized
- *  storage — @c hostmem mem; followed by an init is correct. Everything else needs an
+ *  storage -- @c hostmem mem; followed by an init is correct. Everything else needs an
  *  allocator that is either initialized or zeroed; @c hostmem mem = {0}; is the valid
  *  empty state and means default mode (malloc/free).
  *
@@ -131,11 +131,11 @@ hostmem_result hostmem_init_arena(hostmem *memory, uint32_t capacity);
  *
  *  Both @p data and @p capacity must be multiples of 8 and are rejected otherwise, rather
  *  than rounded. Rounding a capacity up would let the arena bump past the end of a buffer
- *  the caller sized exactly — seven bytes of silent corruption is not worth the convenience.
+ *  the caller sized exactly -- seven bytes of silent corruption is not worth the convenience.
  *
  *  Re-borrowing over another borrowed buffer needs nothing else: there is no buffer to
  *  give back, so just call this again. Only an allocator that currently owns a *heap* arena
- *  has something to release first — hostmem_release() it before switching to a borrowed
+ *  has something to release first -- hostmem_release() it before switching to a borrowed
  *  buffer, or it leaks.
  *
  *  @param[in,out] memory   Allocator to initialize; not NULL. Need not be zeroed.
@@ -226,7 +226,7 @@ size_t hostmem_overflow_total(const hostmem *memory);
  *  @retval HOSTMEM_ERROR_INVALID_PARAM @p size is 0.
  *  @retval HOSTMEM_ERROR_INVALID_STATE Arena mode without a buffer: never initialized, or the
  *                                  fields were written directly.
- *  @retval HOSTMEM_ERROR_OUT_OF_MEMORY malloc failed, or the arena is full — the shortfall goes
+ *  @retval HOSTMEM_ERROR_OUT_OF_MEMORY malloc failed, or the arena is full -- the shortfall goes
  *                                  to hostmem_overflow_total().
  *  @note The memory is not zeroed and holds whatever the previous tenant left.
  *  @whisper Raw earth shaped by the hand of need
@@ -283,13 +283,13 @@ hostmem_result hostmem_clone(
 
 /** @brief Free a buffer: free(), or move the arena index back if it is the tail.
  *
- *  @param[in]     buffer Buffer to release; may be NULL, which changes nothing — though an
+ *  @param[in]     buffer Buffer to release; may be NULL, which changes nothing -- though an
  *                        arena still warns, since NULL is never its tail.
  *  @param[in]     size   Size the buffer was allocated with. Ignored outside arena mode.
  *  @param[in,out] memory Allocator the buffer came from, or NULL for free().
  *  @retval HOSTMEM_SUCCESS Buffer freed, or the arena reclaimed its bytes.
  *  @retval HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED Not the arena's last allocation, so the
- *                      block is still there — do not treat it as released.
+ *                      block is still there -- do not treat it as released.
  *  @warning A @p size that does not match the allocation moves the index by the wrong
  *           amount and hands the same bytes out twice.
  *  @whisper Form dissolves, substance returning to source

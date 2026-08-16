@@ -1,0 +1,102 @@
+cmake_minimum_required(VERSION 3.18.2)
+cmake_policy(VERSION 3.18.2)
+
+# CMP0135 makes FetchContent stamp extracted archives with the extraction time instead of the
+# timestamps inside the tarball, which is what keeps the googletest download in tests/ from
+# looking older than the build that unpacked it. It only exists from CMake 3.24 on, and setting
+# an unknown policy is a hard error -- so it is asked for rather than assumed, and the versions
+# between the declared 3.18.2 minimum and 3.24 simply configure without it.
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
+# build.zig is the master build of this project -- it defines the targets, the options and the
+# matrix that gets verified. This file exists for the one case zig cannot serve: the MSVC ABI
+# on Windows, whose SDK zig does not ship. Everything here mirrors build.zig rather than
+# leading it; when the two disagree, build.zig is right. See AGENTS.md.
+#
+#   cmake -B build -DENABLE_TESTS=ON -DENABLE_BENCHMARKS=ON
+#   cmake --build build --config Release
+#   ctest --test-dir build -C Release
+
+set(PROJECT_NAME hostmem)
+project(${PROJECT_NAME} C)
+
+# CMake only learned to pass /std:c11 to MSVC in 3.20; older versions accept these lines and
+# quietly hand MSVC its default C mode instead. That is not worth raising the minimum over --
+# MSVC itself needs VS 2019 16.8 for C11, which ships with a newer CMake anyway -- but if a
+# Windows build fails on C11 syntax, check the CMake version before the source.
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Mirrors -Dtests, -Dbenchmarks and -Dsanitize of build.zig, defaulting the same way.
+option(ENABLE_BENCHMARKS "Build the bench_* binaries" OFF)
+option(ENABLE_TESTS "Build the googletest binaries" OFF)
+option(ENABLE_SANITIZERS "Build with AddressSanitizer, plus UndefinedBehaviorSanitizer on non-MSVC toolchains (MSVC ships no UBSan)" OFF)
+option(ENABLE_THREAD_SANITIZER "Build with ThreadSanitizer (mutually exclusive with ENABLE_SANITIZERS)" OFF)
+
+# Set before any target is declared, so library, tests and benchmarks are instrumented the same
+# way -- mixing an instrumented library with an uninstrumented test binary produces false reports.
+if(ENABLE_SANITIZERS AND ENABLE_THREAD_SANITIZER)
+  message(FATAL_ERROR "ENABLE_SANITIZERS and ENABLE_THREAD_SANITIZER cannot be combined; ThreadSanitizer does not run together with AddressSanitizer")
+endif()
+
+if(ENABLE_SANITIZERS)
+  if(MSVC)
+    # MSVC ships AddressSanitizer only, there is no UndefinedBehaviorSanitizer counterpart.
+    # This is also the one sanitizer build.zig cannot offer: zig does not ship the asan runtime.
+    message(STATUS "Sanitizers enabled: address")
+    add_compile_options(/fsanitize=address /Zi)
+  else()
+    message(STATUS "Sanitizers enabled: address, undefined")
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address,undefined)
+  endif()
+endif()
+
+if(ENABLE_THREAD_SANITIZER)
+  if(MSVC)
+    message(FATAL_ERROR "ENABLE_THREAD_SANITIZER is not supported by MSVC")
+  endif()
+  message(STATUS "Sanitizers enabled: thread")
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=thread)
+endif()
+
+if(MSVC)
+  # The sources are ASCII and lint.sh keeps them that way, which already settles the question:
+  # every byte means the same in every codepage. This stays as the second line of defence, for
+  # the window between someone typing an em dash and lint.sh telling them not to -- without it
+  # MSVC would read the file in the system codepage and warn (C4819) or mangle the character.
+  add_compile_options(/utf-8)
+endif()
+
+FILE(GLOB HOSTMEM_SRC "src/*.c")
+FILE(GLOB HOSTMEM_HEADERS "include/hostmem/*.h")
+
+add_library(${PROJECT_NAME} STATIC ${HOSTMEM_SRC} ${HOSTMEM_HEADERS})
+
+target_include_directories(${PROJECT_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+if(MSVC)
+  source_group("src" FILES ${HOSTMEM_SRC})
+  source_group("include" FILES ${HOSTMEM_HEADERS})
+  # debug symbols for a parent project stepping into this one
+  target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/JMC>)
+endif()
+
+install(TARGETS ${PROJECT_NAME} ARCHIVE DESTINATION lib)
+install(FILES ${HOSTMEM_HEADERS} DESTINATION include/hostmem)
+
+if(ENABLE_BENCHMARKS)
+  add_subdirectory(benchmarks)
+endif()
+
+if(ENABLE_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

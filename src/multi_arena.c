@@ -10,7 +10,7 @@
 
 /*
  * A chain of bump arenas. Each arena is an ordinary hostmem in owned or external mode, so every
- * rule the single arena carries — alignment, sizes passed in, tail-only reclaim — holds inside
+ * rule the single arena carries -- alignment, sizes passed in, tail-only reclaim -- holds inside
  * one stretch and is not reimplemented here. What this file adds is the order between the
  * stretches and the marker that keeps the search short.
  *
@@ -50,7 +50,7 @@ static uint32_t remaining(const hostmem *arena) {
 // An arena whose remainder has fallen this low is done: the front marker passes it and never
 // looks back. A threshold rather than "nothing left", because the last few bytes of an arena
 // would otherwise keep the scan walking over it for the rest of the chain's life. Where that
-// line sits is the caller's call — see full_threshold above.
+// line sits is the caller's call -- see full_threshold above.
 static bool has_run_full(const hostmem *arena, uint32_t threshold) {
   return remaining(arena) <= threshold;
 }
@@ -202,7 +202,7 @@ hostmem_result hostmem_multi_arena_alloc(uint8_t **buffer, uint32_t size, hostme
 
   // the front marker settles past everything that has run full, once, instead of every scan
   // walking the same exhausted arenas again. How much room an arena may still hold and be passed
-  // over anyway is the chain's own threshold — the caller sized it for these requests.
+  // over anyway is the chain's own threshold -- the caller sized it for these requests.
   while (m->first_open < count &&
          has_run_full(hostmem_arena_vec_get(&m->arenas, m->first_open), threshold)) {
     m->first_open++;
@@ -217,7 +217,7 @@ hostmem_result hostmem_multi_arena_alloc(uint8_t **buffer, uint32_t size, hostme
   }
 
   // nothing had room: open fresh ground. A request larger than a regular arena gets one sized
-  // exactly for it — full on arrival, and out of the way of every later request.
+  // exactly for it -- full on arrival, and out of the way of every later request.
   uint32_t capacity = regular_capacity(m);
   if (capacity < needed) { capacity = needed; }
 
