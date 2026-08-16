@@ -1,7 +1,7 @@
 # One executable per bench_*.c, the same set build.zig produces. Globbed rather than listed:
 # a benchmark is a single self contained file, so a new one needs no entry anywhere.
 #
-# Numbers from a debug build answer a different question — configure Release before reporting
+# Numbers from a debug build answer a different question -- configure Release before reporting
 # any of them. See AGENTS.md.
 
 FILE(GLOB BENCH_SOURCES "src/bench_*.c")

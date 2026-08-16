@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18.2)
 cmake_policy(VERSION 3.18.2)
 cmake_policy(SET CMP0135 NEW)
 
-# build.zig is the master build of this project — it defines the targets, the options and the
+# build.zig is the master build of this project -- it defines the targets, the options and the
 # matrix that gets verified. This file exists for the one case zig cannot serve: the MSVC ABI
 # on Windows, whose SDK zig does not ship. Everything here mirrors build.zig rather than
 # leading it; when the two disagree, build.zig is right. See AGENTS.md.
@@ -25,7 +25,7 @@ option(ENABLE_SANITIZERS "Build with AddressSanitizer, plus UndefinedBehaviorSan
 option(ENABLE_THREAD_SANITIZER "Build with ThreadSanitizer (mutually exclusive with ENABLE_SANITIZERS)" OFF)
 
 # Set before any target is declared, so library, tests and benchmarks are instrumented the same
-# way — mixing an instrumented library with an uninstrumented test binary produces false reports.
+# way -- mixing an instrumented library with an uninstrumented test binary produces false reports.
 if(ENABLE_SANITIZERS AND ENABLE_THREAD_SANITIZER)
   message(FATAL_ERROR "ENABLE_SANITIZERS and ENABLE_THREAD_SANITIZER cannot be combined; ThreadSanitizer does not run together with AddressSanitizer")
 endif()
@@ -53,8 +53,10 @@ if(ENABLE_THREAD_SANITIZER)
 endif()
 
 if(MSVC)
-  # The sources are UTF-8 and their comments carry em dashes. Without this MSVC reads them in
-  # the system codepage and warns (C4819) or mangles them; the flag is not optional here.
+  # The sources are ASCII and lint.sh keeps them that way, which already settles the question:
+  # every byte means the same in every codepage. This stays as the second line of defence, for
+  # the window between someone typing an em dash and lint.sh telling them not to -- without it
+  # MSVC would read the file in the system codepage and warn (C4819) or mangle the character.
   add_compile_options(/utf-8)
 endif()
 

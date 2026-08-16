@@ -11,7 +11,7 @@
  * What this benchmark measures
  *
  * Turning an integer into decimal digits is the conversion a host does most often, and the
- * obvious way — snprintf — parses a format string on every call. The steps below put that
+ * obvious way -- snprintf -- parses a format string on every call. The steps below put that
  * baseline next to the hand written digit loop: once with the length worked out inside the
  * call, once with a length the caller already knew.
  */
@@ -54,7 +54,7 @@ static void test_uint64_to_string_known_size(int stepCount) {
   }
 }
 
-/** Only the length, without writing a digit — what sizing a buffer costs on its own. */
+/** Only the length, without writing a digit -- what sizing a buffer costs on its own. */
 static void test_uint64_to_string_size(int stepCount) {
   uint8_t sink = 0;
   for (int i = 0; i < stepCount; ++i) { sink ^= hostmem_uint64_to_string_size(getNextTestValue()); }

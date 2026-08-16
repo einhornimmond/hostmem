@@ -13,13 +13,13 @@
  *
  * A bucket vector trades one indirection on random access for two things a flat, doubling
  * array cannot give: appends that never copy what is already stored, and element addresses
- * that stay valid forever. The steps below put numbers on both sides of that trade —
+ * that stay valid forever. The steps below put numbers on both sides of that trade --
  * append throughput, traversal, random access, and the cost of the bucket size itself.
  */
 
 #define ELEMENT_COUNT 4000000
 
-/** 64 byte payload — the size range where copying on growth really starts to hurt. */
+/** 64 byte payload -- the size range where copying on growth really starts to hurt. */
 typedef struct bench_payload {
   uint64_t id;
   uint64_t timestamp;
@@ -44,7 +44,7 @@ static volatile uint64_t g_sink = 0;
 /**
  * Stop on a failed setup instead of measuring the wreckage.
  *
- * A reserve that fails leaves the vector empty, and the pushes that follow fail with it —
+ * A reserve that fails leaves the vector empty, and the pushes that follow fail with it --
  * the step would finish suspiciously fast and be reported as a result. Checked once per step,
  * never inside a measured loop, so the timing stays untouched.
  */
@@ -95,7 +95,7 @@ static void test_flat_push(int stepCount) {
   free(flat);
 }
 
-/** Same appends, but into a vector whose buckets already exist — clear keeps them. */
+/** Same appends, but into a vector whose buckets already exist -- clear keeps them. */
 static void test_bvec_refill_after_clear(int stepCount) {
   for (int i = 0; i < stepCount; ++i) bvec_u64_push(&g_reused, (uint64_t)i);
   bvec_u64_clear(&g_reused);
@@ -133,7 +133,7 @@ static void test_payload_push_by_value(int stepCount) {
   bvec_payload_free(&v);
 }
 
-/** The same payload built directly in its final slot — one write instead of two. */
+/** The same payload built directly in its final slot -- one write instead of two. */
 static void test_payload_emplace(int stepCount) {
   bvec_payload v;
   bench_payload *slot;
@@ -178,7 +178,7 @@ static void test_flat_iterate(int stepCount) {
   g_sink += sum;
 }
 
-/** Scattered reads — the case that pays for the extra indirection.
+/** Scattered reads -- the case that pays for the extra indirection.
  *
  * The index runs in uint32_t here and in the flat reference alike: the modulo is the hottest
  * instruction in both loops, and a 64 bit divisor would put the difference in the step
@@ -205,7 +205,7 @@ static void test_flat_random_access(int stepCount) {
   g_sink += sum;
 }
 
-/** Pointers taken before growth stay valid — this is what the indirection buys. */
+/** Pointers taken before growth stay valid -- this is what the indirection buys. */
 static void test_bvec_push_pop_cycle(int stepCount) {
   bvec_u64 v;
   bvec_u64_init(&v, NULL);

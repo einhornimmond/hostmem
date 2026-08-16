@@ -21,7 +21,7 @@ extern "C" {
 
 /**
  * @defgroup hostmem_bucket_vector hostmem_bucket_vector
- * @brief Growing sequence of fixed-size buckets — a deque without push_front.
+ * @brief Growing sequence of fixed-size buckets -- a deque without push_front.
  *
  * Elements settle into buckets of `1 << log2_bucket` slots. A bucket, once allocated, never
  * moves: growth appends a new one and only the small index array of bucket pointers is
@@ -43,25 +43,25 @@ extern "C" {
  *
  * Growth is one-directional on its own: `_pop` leaves the vacated bucket in place and
  * `_clear` keeps all of them, so the next push finds its storage ready. A vector sits at its
- * high water mark until `_shrink` says otherwise — it releases the buckets past the last
+ * high water mark until `_shrink` says otherwise -- it releases the buckets past the last
  * element and tightens the index array onto the rest, without moving a live element. Call it
  * where a peak is behind you, not between pushes.
  *
  * @note Under an arena `_shrink` gives back what the arena will take: it unwinds from the
  * last bucket and stops at the first that is not the arena's most recent allocation, since
  * only that one can move the bump index. Buckets sitting before a superseded index array
- * therefore stay until the arena's own reset. HOSTMEM_SUCCESS either way — a partial reclaim
+ * therefore stay until the arena's own reset. HOSTMEM_SUCCESS either way -- a partial reclaim
  * strands nothing that was not already stranded.
  *
  * @note What the arena keeps, the vector keeps whole: a block that did not come back holds on
  * to its address and to the size it was allocated with. A refusal is a matter of timing, not
- * of ownership — once the allocations above it are gone, the next `_shrink` hands the same
+ * of ownership -- once the allocations above it are gone, the next `_shrink` hands the same
  * blocks over. Recording a smaller size instead would tell the allocator the wrong number and
  * strand the block for the rest of the arena's life.
  *
  * ### Empty states
  *
- * A vector is empty after `_init`, `_clear`, `_free` — and when zero-initialized: `name v =
+ * A vector is empty after `_init`, `_clear`, `_free` -- and when zero-initialized: `name v =
  * {0};` is valid and usable, with the malloc/free allocator. Every read path answers for it
  * (`_size` 0, `_at` / `_front` / `_back` NULL, `_bucket_count` 0, `_pop` out of bounds) and
  * the first `_push` opens the first bucket. Prefer `_init` when an allocator is involved: it
@@ -83,8 +83,8 @@ extern "C" {
  * tx_vec_free(&v);
  * @endcode
  *
- * Payloads of plain data — integers, hashes, fixed-size structs, or pointers into an arena
- * that outlives the vector — need none of this and are what the container is built for.
+ * Payloads of plain data -- integers, hashes, fixed-size structs, or pointers into an arena
+ * that outlives the vector -- need none of this and are what the container is built for.
  *
  * @warning `_clear` and `_free` discard every element at once, `_pop` the last one. Release
  * what the payloads own first; afterwards the slots are unreachable and the ownership with
@@ -119,7 +119,7 @@ extern "C" {
  * @ref hostmem. Two bounds keep them there. One bucket's byte size is fixed at
  * instantiation, so a static assert settles it at compile time; a payload too large for its
  * bucket size never reaches a runtime check. `_reserve` carries the other: it refuses a count
- * whose payload would not stay addressable in that width — without it a request just under
+ * whose payload would not stay addressable in that width -- without it a request just under
  * UINT32_MAX would be accepted and would try to allocate hundreds of millions of buckets one
  * at a time.
  *
@@ -131,7 +131,7 @@ extern "C" {
  * `_front`, `_size`) do not validate their vector pointer. Passing NULL is a programming
  * error, not a runtime condition.
  *
- * @whisper Each bucket fills, then rests — the sequence grows without disturbing what settled
+ * @whisper Each bucket fills, then rests -- the sequence grows without disturbing what settled
  *
  * @{
  */
@@ -191,14 +191,14 @@ bool hostmem_bvec_raw_free(void *ptr, uint32_t size, hostmem *allocator);
  *
  * @param[in,out] index        Address of the index array; @c *index may be NULL on first
  *                             growth and is replaced when the block moves.
- * @param[in]     old_capacity Slots @c *index was allocated with — the allocated count, not
+ * @param[in]     old_capacity Slots @c *index was allocated with -- the allocated count, not
  *                             the used one. An arena resizes by size, so a wrong value moves
  *                             its bump index by the wrong amount.
  * @param[in]     new_capacity Requested slot count; must be > 0. Anything above
  *                             @ref HOSTMEM_BVEC_MAX_INDEX_CAPACITY is rejected before
  *                             allocating.
  * @param[in,out] allocator    Allocator to draw from, or NULL for realloc.
- * @return true on success, false on overflow or exhaustion — @c *index stays valid then.
+ * @return true on success, false on overflow or exhaustion -- @c *index stays valid then.
  */
 bool hostmem_bvec_index_grow(
     void ***index, uint32_t old_capacity, uint32_t new_capacity, hostmem *allocator
@@ -223,7 +223,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
  *
  * @param name         Identifier of the generated type; every function is prefixed with it.
  * @param type         Payload type stored by value.
- * @param log2_bucket  Binary logarithm of the bucket size in elements (0 … 24).
+ * @param log2_bucket  Binary logarithm of the bucket size in elements (0 ... 24).
  * @param scope        Linkage of the generated functions, e.g. `extern` or `static inline`.
  *
  * @note One bucket is one allocation, so its byte size has to fit the allocator's uint32_t.
@@ -279,11 +279,11 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
  * @brief Generate the function bodies belonging to a HOSTMEM_BVEC_DECLARE().
  *
  * Must be instantiated with the same @p name, @p type and @p log2_bucket as the declaration,
- * and — for non-static linkage — in exactly one translation unit.
+ * and -- for non-static linkage -- in exactly one translation unit.
  *
  * @param name         Identifier of the generated type.
  * @param type         Payload type stored by value.
- * @param log2_bucket  Binary logarithm of the bucket size in elements (0 … 24).
+ * @param log2_bucket  Binary logarithm of the bucket size in elements (0 ... 24).
  * @param scope        Linkage of the generated functions; empty for external definitions.
  */
 #define HOSTMEM_BVEC_DEFINE(name, type, log2_bucket, scope)                                        \
@@ -341,7 +341,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     const uint32_t bucket_bytes = HOSTMEM_BVEC_BUCKET_BYTES(type, log2_bucket);                    \
     used = name##_bucket_count(v);                                                                 \
     /* top down, so an arena unwinds in allocation order; it stops at the first bucket it   */     \
-    /* refuses to reclaim, and nothing is lost when it does — that block is simply kept.    */     \
+    /* refuses to reclaim, and nothing is lost when it does -- that block is simply kept.    */    \
     for (i = v->bucket_count; i > used; --i) {                                                     \
       if (!hostmem_bvec_raw_free(v->buckets[i - 1], bucket_bytes, v->allocator)) break;            \
       v->buckets[i - 1] = NULL;                                                                    \
@@ -428,7 +428,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     return HOSTMEM_SUCCESS;                                                                        \
   }                                                                                                \
                                                                                                    \
-  /** Claim the next slot without writing it — construct large payloads in place. */               \
+  /** Claim the next slot without writing it -- construct large payloads in place. */              \
   scope hostmem_result name##_emplace(name *v, type **out_slot) {                                  \
     if (v->tail && v->tail_used < (uint32_t)name##_BUCKET_CAPACITY) {                              \
       *out_slot = v->tail + v->tail_used++;                                                        \
@@ -447,7 +447,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     return HOSTMEM_SUCCESS;                                                                        \
   }                                                                                                \
                                                                                                    \
-  /** Append a value read through a pointer — avoids passing bulky payloads by value.         */   \
+  /** Append a value read through a pointer -- avoids passing bulky payloads by value.         */  \
   scope hostmem_result name##_push_ptr(name *v, const type *value) {                               \
     type *slot;                                                                                    \
     hostmem_result result = name##_emplace(v, &slot);                                              \
@@ -480,7 +480,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     return v->size;                                                                                \
   }                                                                                                \
                                                                                                    \
-  /** Unchecked access — @p index must be < size. */                                               \
+  /** Unchecked access -- @p index must be < size. */                                              \
   scope type *name##_get(const name *v, uint32_t index) {                                          \
     return v->buckets[index >> (uint32_t)name##_BUCKET_SHIFT] +                                    \
            (index & (uint32_t)name##_BUCKET_MASK);                                                 \
@@ -502,7 +502,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
     return v->tail ? v->tail + v->tail_used - 1 : NULL;                                            \
   }                                                                                                \
                                                                                                    \
-  /** Number of buckets holding elements — the outer bound for bucket-wise iteration. */           \
+  /** Number of buckets holding elements -- the outer bound for bucket-wise iteration. */          \
   scope uint32_t name##_bucket_count(const name *v) {                                              \
     return v->tail ? v->tail_index + 1 : 0;                                                        \
   }                                                                                                \
@@ -539,7 +539,7 @@ bool hostmem_bvec_index_free(void **index, uint32_t capacity, hostmem *allocator
  *
  * @param name         Identifier of the generated type.
  * @param type         Payload type stored by value.
- * @param log2_bucket  Binary logarithm of the bucket size in elements (0 … 24).
+ * @param log2_bucket  Binary logarithm of the bucket size in elements (0 ... 24).
  */
 #define HOSTMEM_BVEC_STATIC(name, type, log2_bucket)                                               \
   HOSTMEM_BVEC_DECLARE(name, type, log2_bucket, static inline)                                     \

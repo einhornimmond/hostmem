@@ -106,6 +106,13 @@ below it belong to hostmem and may gain members between releases.
 Targets: Linux (glibc, musl), Windows (MinGW; the MSVC ABI needs the MSVC SDK present), macOS
 on both architectures. Never claim a target you did not build.
 
+- **Sources are ASCII only.** `.c`, `.h` and `.cpp` carry no byte above 0x7F, comments and
+  string literals included. What such a byte means is the compiler's decision, and MSVC reads a
+  file in the system codepage unless handed `/utf-8` — the same source then means something
+  different on another machine, or stops compiling with C4819. `lint.sh` fails on any
+  occurrence; clang-format has no say in it. The stand-ins read the same in a fixed width font:
+  `--` for an em dash, `...` for an ellipsis, `x` for a times sign. Markdown is exempt, being
+  prose no compiler reads.
 - **No C++ headers in C code.** `<cstdint>` in a `.c` file breaks every C compiler; use
   `<stdint.h>`.
 - **Every public header compiles on its own, as C and as C++.** `lint.sh` checks all of them —

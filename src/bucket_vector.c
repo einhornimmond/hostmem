@@ -11,7 +11,7 @@
  * Everything here counts in the allocator's uint32_t. Sizes that still had to be narrowed at
  * runtime are gone: a bucket's byte size is settled at compile time by the static assert in
  * HOSTMEM_BVEC_DECLARE, and the index array is the only place where a slot count still turns
- * into bytes — which happens below, once.
+ * into bytes -- which happens below, once.
  */
 
 /** Slots to bytes. The callers keep capacities inside the bound checked in _index_grow. */

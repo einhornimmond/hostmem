@@ -57,7 +57,7 @@ uint8_t hostmem_uint64_to_string_size(uint64_t v) {
 
 /*
  * |v| as an unsigned value. `v * -1` is undefined for INT64_MIN, because +2^63 has no int64_t
- * to live in — the two's complement range is asymmetric. Negating after the conversion works
+ * to live in -- the two's complement range is asymmetric. Negating after the conversion works
  * for every input: the conversion of a negative value to uint64_t is defined as v + 2^64, and
  * unsigned subtraction wraps by definition, so the result is exactly |v|.
  */

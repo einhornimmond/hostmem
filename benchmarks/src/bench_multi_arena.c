@@ -11,7 +11,7 @@
 /*
  * What this benchmark measures
  *
- * A multi arena serves a request first fit, scanning from `first_open` — the earliest arena
+ * A multi arena serves a request first fit, scanning from `first_open` -- the earliest arena
  * that may still have room. That marker only walks forward, and only over arenas whose
  * remainder has fallen to the chain's full threshold or below. An arena left with more than the
  * threshold but less than the current request is therefore neither served from nor skipped: it
@@ -25,7 +25,7 @@
  * request pays the full walk before it lands, so the per allocation figure is the scan itself.
  *
  * The counterpart runs the same chain lengths with the arenas filled to the threshold instead.
- * The marker settles past all of them once and the scan goes back to a constant — the same
+ * The marker settles past all of them once and the scan goes back to a constant -- the same
  * arenas, the same addresses, only a remainder eight bytes smaller.
  *
  * Every probe in the scan sections lands in one borrowed arena at the end of the chain, sized
@@ -100,7 +100,7 @@ static volatile uint64_t g_sink = 0;
  * Stop on a failed setup instead of measuring the wreckage.
  *
  * A chain that could not be built serves nothing, and the probe loop would leave on its first
- * request — a step finishing suspiciously fast and reported as a result. Checked during
+ * request -- a step finishing suspiciously fast and reported as a result. Checked during
  * preparation only, never inside a measured loop.
  */
 static void require_ok(hostmem_result result, const char *what) {
@@ -131,7 +131,7 @@ static void build_case(scan_case *c, uint32_t arena_count, int stranded) {
   require_ok(
       hostmem_multi_arena_init(&c->chain, ARENA_CAPACITY, FULL_REMAINING, NULL), "init chain"
   );
-  /* the descriptors are bookkeeping, not part of what is measured — have them ready */
+  /* the descriptors are bookkeeping, not part of what is measured -- have them ready */
   require_ok(hostmem_multi_arena_reserve(&c->chain, arena_count + 1), "reserve descriptors");
 
   for (uint32_t i = 0; i < arena_count; ++i) {
@@ -219,7 +219,7 @@ static void test_full_1024(int steps) {
  * Allocate @p steps times so that every request strands one more arena behind it.
  *
  * Request k walks the k arenas already there, finds every remainder too small, and opens the
- * next one — the walk grows with the chain. Opening the arenas and handing them back is inside
+ * next one -- the walk grows with the chain. Opening the arenas and handing them back is inside
  * the clock here, on purpose: this is the shape a long lived chain really takes when its
  * requests never fit the remainders they leave, and the host calls are part of that shape.
  * Read the two rows against each other, not against the sections above.
@@ -273,21 +273,21 @@ int main(void) {
       (unsigned)FULL_REMAINING
   );
 
-  bench_section("first fit past arenas whose remainder is too small — " BENCH_PROBES " allocs");
+  bench_section("first fit past arenas whose remainder is too small -- " BENCH_PROBES " allocs");
   bench_step(test_stranded_0, PROBE_COUNT, "  no arena in the way", "alloc");
   bench_step(test_stranded_16, PROBE_COUNT, "  16 stranded arenas", "alloc");
   bench_step(test_stranded_64, PROBE_COUNT, "  64 stranded arenas", "alloc");
   bench_step(test_stranded_256, PROBE_COUNT, "  256 stranded arenas", "alloc");
   bench_step(test_stranded_1024, PROBE_COUNT, "  1024 stranded arenas", "alloc");
 
-  bench_section("the same chains with the arenas run full — " BENCH_PROBES " allocs");
+  bench_section("the same chains with the arenas run full -- " BENCH_PROBES " allocs");
   bench_step(test_full_16, PROBE_COUNT, "  16 arenas, marker passes", "alloc");
   bench_step(test_full_64, PROBE_COUNT, "  64 arenas, marker passes", "alloc");
   bench_step(test_full_256, PROBE_COUNT, "  256 arenas, marker passes", "alloc");
   bench_step(test_full_1024, PROBE_COUNT, "  1024 arenas, marker passes", "alloc");
 
   bench_section(
-      "a chain growing under its own allocations, opening and release included — " BENCH_GROWTH
+      "a chain growing under its own allocations, opening and release included -- " BENCH_GROWTH
       " allocs"
   );
   bench_step(test_growth_stranded, GROWTH_COUNT, "  every alloc strands an arena", "alloc");

@@ -26,8 +26,8 @@
  * The cap is also the only thing that can make an allocation fail on demand, which a test
  * verifying a failure path needs. HostmemTestAllocationMustFail() below is that seam: it is
  * true only where the cap is really in force, so such a test skips instead of leaning on how
- * much memory the machine happens to have. Without a cap a 4 GiB malloc usually *succeeds* —
- * Linux overcommit hands back an address and maps nothing — and the test would fail while
+ * much memory the machine happens to have. Without a cap a 4 GiB malloc usually *succeeds* --
+ * Linux overcommit hands back an address and maps nothing -- and the test would fail while
  * leaking the block it did not expect to get.
  */
 
@@ -99,7 +99,7 @@ inline bool HostmemTestAllocationMustFail(unsigned long long bytes) {
 
 #if !defined(__linux__) || defined(HOSTMEM_TEST_SKIP_MEMORY_LIMIT)
 namespace {
-/** No cap here, so nothing can be promised to fail — see the note above. */
+/** No cap here, so nothing can be promised to fail -- see the note above. */
 inline bool HostmemTestAllocationMustFail(unsigned long long) {
   return false;
 }

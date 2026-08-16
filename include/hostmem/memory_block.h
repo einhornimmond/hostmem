@@ -15,7 +15,7 @@ extern "C" {
  *  @brief A pointer and its size, kept together.
  *
  *  @ref hostmem keeps no per allocation bookkeeping, so hostmem_free() and hostmem_realloc()
- *  ask the caller for the size the buffer was allocated with — fine where that size is
+ *  ask the caller for the size the buffer was allocated with -- fine where that size is
  *  obvious, a hazard where it is not. A block carries it along and updates both halves in
  *  one step, so they cannot drift apart. Every function here is a thin inline wrapper and
  *  passes the allocator straight through; NULL still means malloc/free.
@@ -69,7 +69,7 @@ static inline hostmem_result hostmem_memory_block_alloc(
 /** @brief Release a block and clear its descriptor.
  *
  *  The descriptor is only zeroed when the bytes really came back. An arena that could not
- *  reclaim leaves it pointing at storage that stays valid until hostmem_reset() — the
+ *  reclaim leaves it pointing at storage that stays valid until hostmem_reset() -- the
  *  block is then neither released nor safe to keep indefinitely, so handle the warning.
  *
  *  @param[in,out] memory_block Descriptor to release; not NULL.
@@ -100,7 +100,7 @@ static inline hostmem_result hostmem_memory_block_free(
  *  See hostmem_realloc() for what each allocator does. @c size follows whenever the allocation
  *  really changed: every success, plus the buried grow, where the arena could not resize in
  *  place and moved the block to a fresh, larger one. It deliberately does not follow a
- *  buried shrink — nothing moved there, the arena still holds the original bytes, and
+ *  buried shrink -- nothing moved there, the arena still holds the original bytes, and
  *  recording the smaller number would strand the block for good, because a size that does
  *  not match the reservation never matches the arena tail.
  *
@@ -125,7 +125,7 @@ static inline hostmem_result hostmem_memory_block_realloc(
   uint8_t *before = memory_block->data;
   hostmem_result result =
       hostmem_realloc(&memory_block->data, memory_block->size, new_size, memory);
-  // the index moved (success), or the arena handed us a new block — either way the
+  // the index moved (success), or the arena handed us a new block -- either way the
   // allocation changed and the recorded size has to follow. Observing the pointer rather
   // than inferring from the sizes stays right if hostmem_realloc ever moves blocks elsewhere.
   if (HOSTMEM_SUCCESS == result || before != memory_block->data) { memory_block->size = new_size; }

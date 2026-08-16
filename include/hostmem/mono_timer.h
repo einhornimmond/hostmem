@@ -19,7 +19,7 @@ extern "C" {
  * - Unix-like: CLOCK_MONOTONIC
  * @note On Windows, hostmem_mono_timer_init must be called before using timers in multi-threaded
  * applications.
- * @whisper Time flows steadily — captured and measured with precision
+ * @whisper Time flows steadily -- captured and measured with precision
  *
  * @{
  */
@@ -30,7 +30,7 @@ typedef int64_t hostmem_mono_timer;
  * @brief Initialize monotonic timer infrastructure (Only on Windows necessary).
  *
  * On Windows, initializes performance counter frequency for high-resolution timing.
- * On other platforms (Linux, macOS), this is a no-op — they use CLOCK_MONOTONIC directly.
+ * On other platforms (Linux, macOS), this is a no-op -- they use CLOCK_MONOTONIC directly.
  *
  * Safe to call multiple times but not threadsafe. Must be called before using timers in
  * multi-threaded
@@ -39,7 +39,7 @@ typedef int64_t hostmem_mono_timer;
  *   true  - initialization successful (or already initialized)
  *   false - Windows QueryPerformanceFrequency failed (extremely rare)
  *
- * @whisper The clock awakens — infrastructure settles into place
+ * @whisper The clock awakens -- infrastructure settles into place
  */
 bool hostmem_mono_timer_init();
 
@@ -54,7 +54,7 @@ bool hostmem_mono_timer_init();
  *
  * @param[out] start  Pointer to timer to receive current time (must not be NULL).
  *
- * @whisper Time is captured — the baseline is set
+ * @whisper Time is captured -- the baseline is set
  */
 void hostmem_mono_timer_reset(hostmem_mono_timer *start);
 
@@ -116,7 +116,7 @@ int64_t hostmem_mono_timer_nanos(hostmem_mono_timer start);
  *
  * @note Uses hostmem_duration_string internally for unit selection.
  *
- * @whisper Time becomes words — durations flow into readability
+ * @whisper Time becomes words -- durations flow into readability
  */
 int hostmem_mono_timer_string(char *buffer, size_t buffer_size, hostmem_mono_timer start);
 
