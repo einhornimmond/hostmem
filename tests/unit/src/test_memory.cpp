@@ -11,36 +11,55 @@
 // bump index by HOSTMEM_ALIGN8(n). Tests that check `last_index` state that explicitly.
 
 TEST(MemoryTest, AFailedAllocLeavesTheOutputPointerAlone) {
-  // "Failures leave every output untouched" has to hold in both modes, and the malloc path is
-  // the one where it is easy to lose: assigning malloc's result straight into *buffer writes a
-  // NULL over whatever the caller held. Seeded with a real address, so a written NULL shows up.
+  // "Failures leave every output untouched", checked where every rejection is decided by the
+  // arguments alone. Seeded with a real address rather than nullptr, so a written NULL shows up
+  // instead of hiding behind the value the pointer already had.
   uint8_t marker = 0;
   uint8_t *buffer = &marker;
 
-  // arena mode: refused before the arena is even asked
   alignas(8) uint8_t storage[64];
   hostmem arena{};
   ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+
   EXPECT_EQ(hostmem_alloc(&buffer, 0, &arena), HOSTMEM_ERROR_INVALID_PARAM);
   EXPECT_EQ(buffer, &marker);
+  EXPECT_EQ(hostmem_alloc(&buffer, 0, nullptr), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(buffer, &marker);
+  // rounding up to 8 would wrap, so the arena refuses before reserving anything. Arena mode
+  // only: the default path hands the size to the host untouched and has nothing to round.
   EXPECT_EQ(
       hostmem_alloc(&buffer, HOSTMEM_MAX_ALLOC_SIZE + 1, &arena), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
   );
   EXPECT_EQ(buffer, &marker);
+  // a full arena, which needs no help from the host to say no
   EXPECT_EQ(hostmem_alloc(&buffer, 128, &arena), HOSTMEM_ERROR_OUT_OF_MEMORY);
   EXPECT_EQ(buffer, &marker);
 
-  // default mode: the same promise, and here the allocation really is attempted. A size no host
-  // can serve rather than a rigged malloc — the point is only what happens to *buffer.
-  EXPECT_EQ(hostmem_alloc(&buffer, 0, nullptr), HOSTMEM_ERROR_INVALID_PARAM);
-  EXPECT_EQ(buffer, &marker);
-  EXPECT_EQ(hostmem_alloc(&buffer, HOSTMEM_MAX_ALLOC_SIZE, nullptr), HOSTMEM_ERROR_OUT_OF_MEMORY);
-  EXPECT_EQ(buffer, &marker);
-
-  // and a call that succeeds does replace it, so the check above is not passing by accident
+  // and a call that succeeds does replace it, so the checks above cannot pass by accident
   ASSERT_EQ(hostmem_alloc(&buffer, 32, &arena), HOSTMEM_SUCCESS);
   EXPECT_NE(buffer, &marker);
   hostmem_release(&arena);
+}
+
+TEST(MemoryTest, AFailedMallocLeavesTheOutputPointerAlone) {
+  // The default path is where the promise is easy to lose: assigning malloc's result straight
+  // into *buffer writes a NULL over whatever the caller held. Only a real refusal exercises it,
+  // and only the address space cap can promise one — without it Linux overcommit answers a
+  // 4 GiB request with an address, and this test would fail while leaking the block.
+  constexpr unsigned long long kUnservable = HOSTMEM_MAX_ALLOC_SIZE;
+  if (!HostmemTestAllocationMustFail(kUnservable)) {
+    GTEST_SKIP() << "no address space cap in force, so no allocation can be made to fail";
+  }
+
+  uint8_t marker = 0;
+  uint8_t *buffer = &marker;
+  const hostmem_result result = hostmem_alloc(&buffer, HOSTMEM_MAX_ALLOC_SIZE, nullptr);
+
+  // released before anything else, so an unexpected success cannot leave the block behind
+  if (HOSTMEM_SUCCESS == result) { hostmem_free(buffer, HOSTMEM_MAX_ALLOC_SIZE, nullptr); }
+
+  EXPECT_EQ(result, HOSTMEM_ERROR_OUT_OF_MEMORY);
+  EXPECT_EQ(buffer, &marker);
 }
 
 TEST(MemoryTest, Align8RoundsUpAndRefusesToWrap) {

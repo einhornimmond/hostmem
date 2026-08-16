@@ -22,6 +22,15 @@
  * up front, so any RLIMIT_AS would stop them from starting at all.
  */
 
+/*
+ * The cap is also the only thing that can make an allocation fail on demand, which a test
+ * verifying a failure path needs. HostmemTestAllocationMustFail() below is that seam: it is
+ * true only where the cap is really in force, so such a test skips instead of leaning on how
+ * much memory the machine happens to have. Without a cap a 4 GiB malloc usually *succeeds* —
+ * Linux overcommit hands back an address and maps nothing — and the test would fail while
+ * leaking the block it did not expect to get.
+ */
+
 #if defined(__linux__)
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
@@ -68,9 +77,33 @@ struct HostmemTestMemoryLimit {
 
 const HostmemTestMemoryLimit g_hostmem_test_memory_limit;
 
+/**
+ * True when a request of @p bytes is certain to be refused by the host in this process.
+ *
+ * Asked at call time, not at startup: setrlimit() above is best effort, and an environment that
+ * already held a tighter or an unlimited cap decides instead. A request at or above the current
+ * limit cannot be served whatever else the process has mapped, which is the only promise a test
+ * on a failure path can build on.
+ */
+inline bool HostmemTestAllocationMustFail(unsigned long long bytes) {
+  rlimit limit{};
+  if (getrlimit(RLIMIT_AS, &limit) != 0) { return false; }
+  if (limit.rlim_cur == RLIM_INFINITY) { return false; }
+  return bytes >= static_cast<unsigned long long>(limit.rlim_cur);
+}
+
 } // namespace
 
 #endif // !HOSTMEM_TEST_SKIP_MEMORY_LIMIT
 #endif // __linux__
+
+#if !defined(__linux__) || defined(HOSTMEM_TEST_SKIP_MEMORY_LIMIT)
+namespace {
+/** No cap here, so nothing can be promised to fail — see the note above. */
+inline bool HostmemTestAllocationMustFail(unsigned long long) {
+  return false;
+}
+} // namespace
+#endif
 
 #endif // HOSTMEM_TESTS_MEMORY_LIMIT_H
