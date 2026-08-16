@@ -184,18 +184,25 @@ hostmem_result hostmem_multi_arena_init(
 );
 
 /**
- * @brief Allocate a chain on the heap and initialize it.
+ * @brief Allocate a chain descriptor and initialize it.
  *
- * @param[in] arena_capacity As in hostmem_multi_arena_init().
- * @param[in] full_remaining As in hostmem_multi_arena_init().
- * @param[in] bookkeeping    As in hostmem_multi_arena_init().
- * @return Initialized allocator, or NULL when the heap is exhausted or hostmem_multi_arena_init()
- *         refused the arguments.
- * @note Pair with hostmem_multi_arena_destroy().
- * @whisper A vessel for vessels, itself drawn from the stream
+ * Two allocators, and they answer different questions. @p bookkeeping feeds the descriptor
+ * vector *inside* the chain, growing as arenas are opened; @p allocator hands out the chain
+ * descriptor itself, once, here. A host that wants every byte of this library inside storage it
+ * owns passes both; passing NULL for either takes malloc for that part alone.
+ *
+ * @param[in]     arena_capacity As in hostmem_multi_arena_init().
+ * @param[in]     full_remaining As in hostmem_multi_arena_init().
+ * @param[in,out] bookkeeping    As in hostmem_multi_arena_init(): for the descriptor vector.
+ * @param[in,out] allocator      Allocator to take this descriptor from, or NULL for malloc.
+ * @return Initialized allocator, or NULL when @p allocator had no room or
+ *         hostmem_multi_arena_init() refused the arguments.
+ * @note Pair with hostmem_multi_arena_destroy() **and hand it the same @p allocator**; a
+ *       different one moves the wrong bump index.
+ * @whisper A vessel for vessels, drawn from whichever stream the host points to
  */
 hostmem_multi_arena *hostmem_multi_arena_create(
-    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
+    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping, hostmem *allocator
 );
 
 /**
@@ -284,12 +291,23 @@ hostmem_result hostmem_multi_arena_shrink(hostmem_multi_arena *m);
 void hostmem_multi_arena_release(hostmem_multi_arena *m);
 
 /**
- * @brief hostmem_multi_arena_release(), then release the descriptor itself.
+ * @brief hostmem_multi_arena_release(), then give the descriptor itself back.
  *
- * @param[in] m From hostmem_multi_arena_create(), never stack or static storage; may be NULL.
- * @whisper The vessel that held vessels returns to the stream
+ * @param[in]     m         From hostmem_multi_arena_create(), never stack or static storage;
+ *                          may be NULL.
+ * @param[in,out] allocator The allocator @p m came from -- the same one
+ *                          hostmem_multi_arena_create() was handed, NULL for malloc. Not the
+ *                          bookkeeping allocator, which the release step has already dealt with.
+ * @retval HOSTMEM_SUCCESS  Released, or @p m was NULL and there was nothing to do.
+ * @retval HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED @p allocator is an arena and this
+ *                          descriptor is not its most recent allocation. Every arena in the
+ *                          chain is released either way; only the descriptor's own bytes stay
+ *                          until that arena's reset.
+ * @warning An @p allocator other than the one that handed the descriptor out moves the wrong
+ *          bump index and hands the same bytes out twice.
+ * @whisper The vessel that held vessels returns to the stream it came from
  */
-void hostmem_multi_arena_destroy(hostmem_multi_arena *m);
+hostmem_result hostmem_multi_arena_destroy(hostmem_multi_arena *m, hostmem *allocator);
 
 /**
  * @brief Number of arenas in the chain.

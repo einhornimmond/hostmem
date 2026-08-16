@@ -58,9 +58,12 @@ static bool account_capacity_exceeded(uint32_t aligned_size, hostmem *memory) {
 
 // ********** manage memory allocator themself *******************
 
-hostmem *hostmem_create() {
+hostmem *hostmem_create(hostmem *allocator) {
   hostmem *memory = NULL;
-  if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&memory, sizeof(hostmem), NULL)) { return NULL; }
+  // the descriptor comes from wherever the caller points; NULL is malloc, as everywhere else
+  if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&memory, sizeof(hostmem), allocator)) {
+    return NULL;
+  }
   // zeroed, so it is in a valid state, even if using it with type = HOSTMEM_ALLOC_TYPE_DEFAULT the
   // same is as memory = NULL
   memset(memory, 0, sizeof(hostmem));
@@ -122,10 +125,14 @@ void hostmem_release(hostmem *memory) {
   hostmem_reset(memory);
 }
 
-void hostmem_destroy(hostmem *memory) {
-  if (!memory) return;
+hostmem_result hostmem_destroy(hostmem *memory, hostmem *allocator) {
+  // nothing to give back is not a failure; hostmem_free would warn here, which would read as
+  // "something stayed behind" when nothing was ever handed out
+  if (!memory) { return HOSTMEM_SUCCESS; }
   hostmem_release(memory);
-  hostmem_free((uint8_t *)memory, sizeof(hostmem), NULL);
+  // whatever the arena it was carved from answers is the caller's to see: the descriptor is
+  // gone from their point of view either way, but its bytes may only come back on reset
+  return hostmem_free((uint8_t *)memory, sizeof(hostmem), allocator);
 }
 
 size_t hostmem_overflow_total(const hostmem *memory) {

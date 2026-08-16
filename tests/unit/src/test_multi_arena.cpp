@@ -79,7 +79,7 @@ TEST(MultiArena, InitRejectsBadArguments) {
   EXPECT_EQ(
       hostmem_multi_arena_init(&m, UINT32_MAX, 0, nullptr), HOSTMEM_ERROR_ARITHMETIC_OVERFLOW
   );
-  EXPECT_EQ(hostmem_multi_arena_create(UINT32_MAX, 0, nullptr), nullptr);
+  EXPECT_EQ(hostmem_multi_arena_create(UINT32_MAX, 0, nullptr, nullptr), nullptr);
 
   // a threshold that reaches the capacity would write every arena off at birth
   EXPECT_EQ(
@@ -90,7 +90,7 @@ TEST(MultiArena, InitRejectsBadArguments) {
       hostmem_multi_arena_init(&m, kArenaCapacity, kArenaCapacity + 1, nullptr),
       HOSTMEM_ERROR_INVALID_PARAM
   );
-  EXPECT_EQ(hostmem_multi_arena_create(kArenaCapacity, kArenaCapacity, nullptr), nullptr);
+  EXPECT_EQ(hostmem_multi_arena_create(kArenaCapacity, kArenaCapacity, nullptr, nullptr), nullptr);
   // the capacity it is measured against is the effective one, so a 0 there means the default
   EXPECT_EQ(
       hostmem_multi_arena_init(&m, 0, HOSTMEM_MULTI_ARENA_DEFAULT_CAPACITY, nullptr),
@@ -107,6 +107,76 @@ TEST(MultiArena, InitRejectsBadArguments) {
       hostmem_multi_arena_init(&m, kArenaCapacity, kArenaCapacity - 8, nullptr), HOSTMEM_SUCCESS
   );
   hostmem_multi_arena_release(&m);
+}
+
+TEST(MultiArena, CreateTakesTheDescriptorFromWhereverTheHostSays) {
+  // Two allocators with two jobs: `bookkeeping` feeds the descriptor vector inside the chain,
+  // `allocator` hands out the chain descriptor itself. Both are pointed at host storage here,
+  // so nothing about this chain reaches the heap except the arenas it opens for payload.
+  alignas(8) uint8_t descriptor_blob[512];
+  alignas(8) uint8_t bookkeeping_blob[4096];
+  hostmem descriptor_store{};
+  hostmem bookkeeping_store{};
+  ASSERT_EQ(
+      hostmem_init_arena_borrow(&descriptor_store, descriptor_blob, sizeof(descriptor_blob)),
+      HOSTMEM_SUCCESS
+  );
+  ASSERT_EQ(
+      hostmem_init_arena_borrow(&bookkeeping_store, bookkeeping_blob, sizeof(bookkeeping_blob)),
+      HOSTMEM_SUCCESS
+  );
+
+  hostmem_multi_arena *m =
+      hostmem_multi_arena_create(kArenaCapacity, 0, &bookkeeping_store, &descriptor_store);
+  ASSERT_NE(m, nullptr);
+  EXPECT_GE(reinterpret_cast<uintptr_t>(m), reinterpret_cast<uintptr_t>(descriptor_blob));
+  EXPECT_LT(
+      reinterpret_cast<uintptr_t>(m),
+      reinterpret_cast<uintptr_t>(descriptor_blob) + sizeof(descriptor_blob)
+  );
+  EXPECT_EQ(descriptor_store.last_index, HOSTMEM_ALIGN8(sizeof(hostmem_multi_arena)));
+
+  // the chain works, and its vector grows out of the other blob rather than the descriptor one
+  uint8_t *buffer = nullptr;
+  ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 64, m), HOSTMEM_SUCCESS);
+  ExpectAligned(buffer);
+  EXPECT_EQ(hostmem_multi_arena_arena_count(m), 1u);
+  EXPECT_GT(bookkeeping_store.last_index, 0u);
+  EXPECT_EQ(descriptor_store.last_index, HOSTMEM_ALIGN8(sizeof(hostmem_multi_arena)));
+
+  // still the tail of its arena, so the descriptor comes back whole
+  EXPECT_EQ(hostmem_multi_arena_destroy(m, &descriptor_store), HOSTMEM_SUCCESS);
+  EXPECT_EQ(descriptor_store.last_index, 0u);
+
+  hostmem_release(&descriptor_store);
+  hostmem_release(&bookkeeping_store);
+}
+
+TEST(MultiArena, CreateGivesTheDescriptorBackWhenInitRefuses) {
+  // The rejected arguments must not leave the descriptor stranded in the host's arena: it was
+  // the tail when create took it, and it is handed straight back on the same allocator.
+  alignas(8) uint8_t descriptor_blob[512];
+  hostmem descriptor_store{};
+  ASSERT_EQ(
+      hostmem_init_arena_borrow(&descriptor_store, descriptor_blob, sizeof(descriptor_blob)),
+      HOSTMEM_SUCCESS
+  );
+
+  // a threshold that reaches the capacity is refused by init, after create allocated
+  EXPECT_EQ(
+      hostmem_multi_arena_create(kArenaCapacity, kArenaCapacity, nullptr, &descriptor_store),
+      nullptr
+  );
+  EXPECT_EQ(descriptor_store.last_index, 0u); // nothing stranded
+
+  // and the arena is still usable for the next attempt, at the very same address
+  hostmem_multi_arena *m =
+      hostmem_multi_arena_create(kArenaCapacity, 0, nullptr, &descriptor_store);
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(m), reinterpret_cast<uintptr_t>(descriptor_blob));
+  EXPECT_EQ(hostmem_multi_arena_destroy(m, &descriptor_store), HOSTMEM_SUCCESS);
+
+  hostmem_release(&descriptor_store);
 }
 
 TEST(MultiArena, FullThresholdDecidesWhenAnArenaLeavesTheScan) {
@@ -241,14 +311,23 @@ TEST(MultiArena, NullAllocatorIsNotAFallback) {
   EXPECT_EQ(hostmem_multi_arena_shrink(nullptr), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_borrow(nullptr, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_measure(nullptr, nullptr), HOSTMEM_ERROR_NULL_POINTER);
-  // NULL is a no-op, not a crash
+  // NULL is a no-op, not a crash. Destroy says so out loud: nothing was handed out, so nothing
+  // stayed behind -- the arena warning would read as the opposite, and it must not appear here
+  // whichever allocator is named.
   hostmem_multi_arena_reset(nullptr);
   hostmem_multi_arena_release(nullptr);
-  hostmem_multi_arena_destroy(nullptr);
+  EXPECT_EQ(hostmem_multi_arena_destroy(nullptr, nullptr), HOSTMEM_SUCCESS);
+
+  alignas(8) uint8_t storage[64];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_multi_arena_destroy(nullptr, &arena), HOSTMEM_SUCCESS);
+  EXPECT_EQ(arena.last_index, 0u); // and it did not move an index over a block it never had
+  hostmem_release(&arena);
 }
 
 TEST(MultiArena, CreateAndDestroy) {
-  hostmem_multi_arena *m = hostmem_multi_arena_create(kArenaCapacity, 0, nullptr);
+  hostmem_multi_arena *m = hostmem_multi_arena_create(kArenaCapacity, 0, nullptr, nullptr);
   ASSERT_NE(m, nullptr);
   EXPECT_EQ(hostmem_multi_arena_arena_count(m), 0u);
 
@@ -256,7 +335,8 @@ TEST(MultiArena, CreateAndDestroy) {
   ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 64, m), HOSTMEM_SUCCESS);
   EXPECT_EQ(Measure(m).reserved, kArenaCapacity);
 
-  hostmem_multi_arena_destroy(m);
+  // malloc backed, so the descriptor really goes back and there is nothing left to warn about
+  EXPECT_EQ(hostmem_multi_arena_destroy(m, nullptr), HOSTMEM_SUCCESS);
 }
 
 // ---------------------------------------------------------------------------

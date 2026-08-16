@@ -10,6 +10,64 @@
 // The arena rounds every size up to a multiple of 8, so a request of `n` moves the
 // bump index by HOSTMEM_ALIGN8(n). Tests that check `last_index` state that explicitly.
 
+TEST(MemoryTest, CreateTakesTheDescriptorFromWhereverTheHostSays) {
+  // The point of the parameter: a binding can keep the allocator struct itself inside storage
+  // it owns, instead of it being the one allocation that escaped into malloc.
+  alignas(8) uint8_t host_blob[512];
+  hostmem host{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&host, host_blob, sizeof(host_blob)), HOSTMEM_SUCCESS);
+
+  hostmem *carved = hostmem_create(&host);
+  ASSERT_NE(carved, nullptr);
+  // it really came out of the blob, not from the heap
+  EXPECT_GE(reinterpret_cast<uintptr_t>(carved), reinterpret_cast<uintptr_t>(host_blob));
+  EXPECT_LT(
+      reinterpret_cast<uintptr_t>(carved),
+      reinterpret_cast<uintptr_t>(host_blob) + sizeof(host_blob)
+  );
+  EXPECT_EQ(reinterpret_cast<uintptr_t>(carved) % 8, 0u);
+  EXPECT_EQ(host.last_index, HOSTMEM_ALIGN8(sizeof(hostmem)));
+
+  // zeroed and usable, exactly as the malloc-backed one is
+  EXPECT_EQ(carved->allocation_type, HOSTMEM_ALLOC_TYPE_DEFAULT);
+  uint8_t *from_carved = nullptr;
+  ASSERT_EQ(hostmem_alloc(&from_carved, 16, carved), HOSTMEM_SUCCESS); // default mode: malloc
+  hostmem_free(from_carved, 16, carved);
+
+  // still the tail of the host arena, so it comes back whole
+  EXPECT_EQ(hostmem_destroy(carved, &host), HOSTMEM_SUCCESS);
+  EXPECT_EQ(host.last_index, 0u);
+
+  // and the host's own buffer is untouched by all of it
+  hostmem_release(&host);
+  host_blob[0] = 0x42;
+  EXPECT_EQ(host_blob[0], 0x42);
+}
+
+TEST(MemoryTest, DestroyReportsWhatTheArenaCouldNotTakeBack) {
+  // A descriptor buried under a later allocation cannot move the bump index. Everything it held
+  // is released regardless; only its own bytes wait for the arena's reset, and the caller is
+  // told so rather than left to assume otherwise.
+  alignas(8) uint8_t host_blob[512];
+  hostmem host{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&host, host_blob, sizeof(host_blob)), HOSTMEM_SUCCESS);
+
+  hostmem *buried = hostmem_create(&host);
+  ASSERT_NE(buried, nullptr);
+  uint8_t *on_top = nullptr;
+  ASSERT_EQ(hostmem_alloc(&on_top, 32, &host), HOSTMEM_SUCCESS); // now it is not the tail
+  const uint32_t index_before = host.last_index;
+
+  EXPECT_EQ(hostmem_destroy(buried, &host), HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED);
+  EXPECT_EQ(host.last_index, index_before); // the index did not move by the wrong amount either
+
+  // NULL is a no-op success, not a warning: nothing was ever handed out to keep
+  EXPECT_EQ(hostmem_destroy(nullptr, &host), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_destroy(nullptr, nullptr), HOSTMEM_SUCCESS);
+
+  hostmem_release(&host);
+}
+
 TEST(MemoryTest, AFailedAllocLeavesTheOutputPointerAlone) {
   // "Failures leave every output untouched", checked where every rejection is decided by the
   // arguments alone. Seeded with a real address rather than nullptr, so a written NULL shows up
@@ -262,7 +320,7 @@ TEST(MemoryTest, ReinitArenaWorksOnAZeroedAllocator) {
 }
 
 TEST(MemoryTest, CreateAndDestroy) {
-  hostmem *mem = hostmem_create();
+  hostmem *mem = hostmem_create(nullptr);
   ASSERT_TRUE(mem);
   // fresh from create it is in default mode: malloc/free
   EXPECT_EQ(mem->allocation_type, HOSTMEM_ALLOC_TYPE_DEFAULT);
@@ -273,9 +331,11 @@ TEST(MemoryTest, CreateAndDestroy) {
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_alloc(&buffer, 16, mem), HOSTMEM_SUCCESS);
 
-  // destroy releases the arena and the allocator itself
-  hostmem_destroy(mem);
-  hostmem_destroy(nullptr); // tolerated
+  // destroy releases the arena and the allocator itself. Malloc backed, so the descriptor
+  // really goes back: nothing is left for the arena warning to be about.
+  EXPECT_EQ(hostmem_destroy(mem, nullptr), HOSTMEM_SUCCESS);
+  // NULL is tolerated and is a success, not a warning -- nothing was handed out to keep
+  EXPECT_EQ(hostmem_destroy(nullptr, nullptr), HOSTMEM_SUCCESS);
 }
 
 TEST(MemoryTest, ResetDropsEverythingAtOnce) {

@@ -94,14 +94,17 @@ hostmem_result hostmem_multi_arena_init(
 }
 
 hostmem_multi_arena *hostmem_multi_arena_create(
-    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping
+    uint32_t arena_capacity, uint32_t full_remaining, hostmem *bookkeeping, hostmem *allocator
 ) {
   hostmem_multi_arena *m = NULL;
-  if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&m, sizeof(hostmem_multi_arena), NULL)) {
+  // `allocator` carries this descriptor, `bookkeeping` the vector inside it -- two questions
+  // with two answers, and NULL means malloc for either one on its own
+  if (HOSTMEM_SUCCESS != hostmem_alloc((uint8_t **)&m, sizeof(hostmem_multi_arena), allocator)) {
     return NULL;
   }
   if (HOSTMEM_SUCCESS != hostmem_multi_arena_init(m, arena_capacity, full_remaining, bookkeeping)) {
-    hostmem_free((uint8_t *)m, sizeof(hostmem_multi_arena), NULL);
+    // straight back to where it came from; it is still the tail there, so an arena takes it
+    hostmem_free((uint8_t *)m, sizeof(hostmem_multi_arena), allocator);
     return NULL;
   }
   return m;
@@ -163,10 +166,12 @@ void hostmem_multi_arena_release(hostmem_multi_arena *m) {
   m->first_open = 0;
 }
 
-void hostmem_multi_arena_destroy(hostmem_multi_arena *m) {
-  if (!m) return;
+hostmem_result hostmem_multi_arena_destroy(hostmem_multi_arena *m, hostmem *allocator) {
+  // nothing to give back is not a failure; hostmem_free would warn here, which would read as
+  // "something stayed behind" when nothing was ever handed out
+  if (!m) { return HOSTMEM_SUCCESS; }
   hostmem_multi_arena_release(m);
-  hostmem_free((uint8_t *)m, sizeof(hostmem_multi_arena), NULL);
+  return hostmem_free((uint8_t *)m, sizeof(hostmem_multi_arena), allocator);
 }
 
 hostmem_result hostmem_multi_arena_measure(
