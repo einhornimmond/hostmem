@@ -178,4 +178,6 @@ pub fn build(b: *std.Build) void {
     const buildStep = zcc.createStep(b, "cdb", cdbTargetsSlice);
     // Build everything in the project before generating the compile_commands
     for (cdbTargetsSlice) |cdbTarget| buildStep.dependOn(&cdbTarget.step);
+    // Regenerate compile_commands.json on every build, not only on `zig build cdb`
+    b.getInstallStep().dependOn(buildStep);
 }
