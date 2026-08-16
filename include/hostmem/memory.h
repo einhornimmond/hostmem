@@ -1,6 +1,7 @@
 #ifndef HOSTMEM_MEMORY_H
 #define HOSTMEM_MEMORY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -39,6 +40,37 @@ extern "C" {
  * Example: HOSTMEM_ALIGN8(3) -> 8, HOSTMEM_ALIGN8(8) -> 8, HOSTMEM_ALIGN8(10) -> 16
  */
 #define HOSTMEM_ALIGN8(x) (((x) + 7) & (~7))
+
+/** @brief Largest size a single allocation may ask for.
+ *
+ * Every size rounds up to a multiple of 8, so the ceiling is the largest such multiple that
+ * still fits uint32_t: rounding anything above it would wrap, and the allocator answers
+ * HOSTMEM_ERROR_ARITHMETIC_OVERFLOW instead. Callers that derive a maximum element count from
+ * a byte budget should divide this constant rather than UINT32_MAX, so their bound and the
+ * allocator's agree.
+ */
+#define HOSTMEM_MAX_ALLOC_SIZE (UINT32_MAX - 7u)
+
+/** @brief Round a size up to the multiple of 8 the allocator will actually reserve for it.
+ *
+ *  @ref HOSTMEM_ALIGN8 with the one check the bare macro cannot carry: a size above
+ *  @ref HOSTMEM_MAX_ALLOC_SIZE would wrap on the way up, and wrapping here would hand back a
+ *  number smaller than what was asked for. Every size that moves an arena's index passes through
+ *  this, in both directions, so allocating and freeing agree on the aligned figure — and a caller
+ *  sizing a buffer ahead of time gets at the same number instead of reimplementing it.
+ *
+ *  @param[in]  size    Size to round up; 0 is allowed and yields 0.
+ *  @param[out] aligned Receives the rounded size; not NULL. Untouched when the rounding wraps.
+ *  @return true when @p aligned was written, false when @p size exceeds
+ *          @ref HOSTMEM_MAX_ALLOC_SIZE — the callers turn that into
+ *          HOSTMEM_ERROR_ARITHMETIC_OVERFLOW.
+ */
+static inline bool hostmem_align8_u32(uint32_t size, uint32_t *aligned) {
+  if (size > HOSTMEM_MAX_ALLOC_SIZE) { return false; }
+
+  *aligned = HOSTMEM_ALIGN8(size);
+  return true;
+}
 
 /** @brief Allocation strategy and ownership of the arena buffer. */
 typedef enum hostmem_alloc_type {
@@ -90,19 +122,20 @@ hostmem *hostmem_create();
  */
 hostmem_result hostmem_init_arena(hostmem *memory, uint32_t capacity);
 
-/** @brief Initialize arena mode with a caller owned buffer.
+/** @brief Borrow a caller owned buffer and run arena mode inside it.
  *
- *  Borrows @p data; hostmem_release() will not release it. Suited to stack or static
- *  storage that outlives the allocator. Like hostmem_init_arena() it writes every field
- *  and reads none.
+ *  The buffer is filled but never freed: hostmem_release() lets @p data go untouched, so it
+ *  stays the caller's throughout. Suited to stack or static storage that outlives the
+ *  allocator. Like hostmem_init_arena() it writes every field and reads none.
+ *  hostmem_multi_arena_borrow() borrows the same way, one arena at a time into a chain.
  *
  *  Both @p data and @p capacity must be multiples of 8 and are rejected otherwise, rather
  *  than rounded. Rounding a capacity up would let the arena bump past the end of a buffer
  *  the caller sized exactly — seven bytes of silent corruption is not worth the convenience.
  *
- *  Re-initializing over another external arena needs nothing else: there is no buffer to
+ *  Re-borrowing over another borrowed buffer needs nothing else: there is no buffer to
  *  give back, so just call this again. Only an allocator that currently owns a *heap* arena
- *  has something to release first — hostmem_release() it before switching to an external
+ *  has something to release first — hostmem_release() it before switching to a borrowed
  *  buffer, or it leaks.
  *
  *  @param[in,out] memory   Allocator to initialize; not NULL. Need not be zeroed.
@@ -114,7 +147,7 @@ hostmem_result hostmem_init_arena(hostmem *memory, uint32_t capacity);
  *                                  not 8 byte aligned.
  *  @whisper Borrowed ground, returned unbroken
  */
-hostmem_result hostmem_init_arena_static(hostmem *memory, uint8_t *data, uint32_t capacity);
+hostmem_result hostmem_init_arena_borrow(hostmem *memory, uint8_t *data, uint32_t capacity);
 
 /** @brief Drop every outstanding allocation at once, keeping the buffer. O(1).
  *

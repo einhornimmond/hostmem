@@ -85,4 +85,19 @@ static inline void bench_total(hostmem_mono_timer time_used, int step_count, con
   printf("\nall benchmarks: %s, %ss per step: %d\n", buffer, unit, step_count);
 }
 
+/**
+ * Closing line for a run whose steps do not all share one count.
+ *
+ * The step count bench_total() prints says what a single step was, which only means something
+ * when every step processed the same number of them. A file that mixes counts — because one
+ * section costs orders of magnitude more per step than another — has no single figure to name
+ * there, and naming one anyway would misreport whichever section disagrees. Such a file states
+ * the count in each section heading and closes with the wall clock alone.
+ */
+static inline void bench_total_time(hostmem_mono_timer time_used) {
+  char buffer[BENCH_STRING_BUFFER_SIZE];
+  hostmem_mono_timer_string(buffer, BENCH_STRING_BUFFER_SIZE, time_used);
+  printf("\nall benchmarks: %s\n", buffer);
+}
+
 #endif // HOSTMEM_BENCH_REPORT_H

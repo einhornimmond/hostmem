@@ -8,12 +8,13 @@ constantly and the standard library does slowly. What it does not bring is a mem
 its own: you hand it a blob, it works inside that blob, and it gives the blob back.
 
 ```c
+#include <stdalign.h>
 #include "hostmem/memory.h"
 #include "hostmem/bucket_vector.h"
 
-uint8_t blob[64 * 1024];          // wherever this comes from: the host decides
+alignas(8) uint8_t blob[64 * 1024];   // wherever this comes from: the host decides
 hostmem mem;
-hostmem_init_arena_static(&mem, blob, sizeof(blob));
+hostmem_init_arena_borrow(&mem, blob, sizeof(blob));
 
 uint8_t *buffer = NULL;
 hostmem_alloc(&buffer, 128, &mem);
@@ -22,6 +23,18 @@ hostmem_free(buffer, 128, &mem);
 
 hostmem_reset(&mem);              // the whole arena, in one move
 ```
+
+A borrowed buffer is taken exactly as it is. Both halves of that line have to hold: `blob` must
+start on an 8 byte boundary, which is what `alignas(8)` is for, and `sizeof(blob)` must be a
+multiple of 8. Neither is rounded — anything else comes back as
+`HOSTMEM_ERROR_INVALID_PARAM` and no arena is set up.
+
+The size is the half that surprises people, because the owned arena does round it:
+`hostmem_init_arena(&mem, 100)` reserves 104 bytes and succeeds, while
+`hostmem_init_arena_borrow(&mem, blob, 100)` is refused. The difference is who owns the memory
+— rounding 100 up to 104 in a buffer you sized at 100 would let the arena hand out four bytes
+past its end, so the size is questioned instead of corrected. Declare the blob at a multiple of
+8 rather than trimming the call. `hostmem_multi_arena_borrow()` borrows under the same rule.
 
 Pass `NULL` instead of an allocator and every call falls back to malloc/free. That is the only
 place in the library where `malloc` appears — `lint.sh` fails the build if a second one shows
@@ -33,6 +46,7 @@ up.
 |---|---|
 | `hostmem/memory.h` | bump arena or malloc/free, chosen per call by what you pass |
 | `hostmem/memory_block.h` | pointer and size kept together, so freeing needs no bookkeeping from you |
+| `hostmem/multi_arena.h` | a chain of arenas that opens another one instead of running dry |
 | `hostmem/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
 | `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
 | `hostmem/duration.h` | nanoseconds to a readable span |
@@ -51,6 +65,47 @@ up.
   `HOSTMEM_WARNING_ARENA_MEMORY_NOT_RECLAIMED` — the operation happened, the memory did not
   come back. It is neither a failure nor a release; handle it where it appears.
 - **Failures leave every output untouched.**
+
+## When one arena is not enough
+
+An arena has the capacity it was born with. `hostmem_multi_arena` keeps a chain of them and
+opens the next one when the current stretch fills, so the size never has to be guessed right up
+front — and a request larger than the arena capacity gets ground of its own instead of a
+refusal.
+
+```c
+#include "hostmem/multi_arena.h"
+
+hostmem_multi_arena chain;
+// 1 MiB per arena, and an arena drops out of the search once under 4 KiB is left.
+// 0 for either takes the default: 1 MiB and 128 bytes.
+hostmem_multi_arena_init(&chain, 1024 * 1024, 4096, NULL);
+hostmem_multi_arena_borrow(&chain, blob, sizeof(blob)); // optional: lend it the host's blob,
+                                                        // same alignas(8) and multiple-of-8 rule
+
+uint8_t *buffer = NULL;
+hostmem_multi_arena_alloc(&buffer, 4096, &chain);
+
+hostmem_multi_arena_reset(&chain);    // every allocation, in one move; the arenas stay
+hostmem_multi_arena_shrink(&chain);   // and give the empty ones back to the host
+hostmem_multi_arena_release(&chain);
+```
+
+Pointers stay put: an arena, once opened, is never moved or resized. A borrowed block stays
+the host's: the chain fills it and never frees it. `NULL` is not a malloc fallback here — a chain has to exist.
+
+The third argument is the one worth thinking about. A request is served first fit, and an arena
+leaves that search for good once its remainder falls to the threshold. So the question it
+answers is: what is the smallest request that should still land in a leftover? An arena holds a
+request of `n` bytes while at least `n` are left, and is written off at or below the threshold,
+so `n - 8` drops it out of the search exactly when it can no longer take that request.
+
+For uniform records that is the whole story — one alignment step below the record size wastes
+nothing and keeps the search short. For mixed sizes it is a trade: lower gives up nothing usable
+but leaves arenas in the search holding remainders only the small requests fit, at around half a
+nanosecond per arena walked, which only bites once a thousand of them have piled up; higher
+keeps the search short and writes off up to a threshold worth of bytes per arena.
+`bench_multi_arena` puts numbers on both ends.
 
 ## Build
 

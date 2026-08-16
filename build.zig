@@ -162,6 +162,7 @@ pub fn build(b: *std.Build) void {
     if (enable_benchmarks) {
         const path = "benchmarks/src";
         processBuildTarget(&context, .{ .name = "bench_bucket_vector", .srcs = &.{"bench_bucket_vector.c"} }, path);
+        processBuildTarget(&context, .{ .name = "bench_multi_arena", .srcs = &.{"bench_multi_arena.c"} }, path);
         processBuildTarget(&context, .{ .name = "bench_numberToString", .srcs = &.{"bench_numberToString.c"} }, path);
     }
 
@@ -171,10 +172,13 @@ pub fn build(b: *std.Build) void {
         processBuildTarget(&context, .{ .link_googletest = true, .name = "test_converter", .srcs = &.{"test_converter.cpp"} }, path);
         processBuildTarget(&context, .{ .link_googletest = true, .name = "test_duration", .srcs = &.{"test_duration.cpp"} }, path);
         processBuildTarget(&context, .{ .link_googletest = true, .name = "test_memory", .srcs = &.{"test_memory.cpp"} }, path);
+        processBuildTarget(&context, .{ .link_googletest = true, .name = "test_multi_arena", .srcs = &.{"test_multi_arena.cpp"} }, path);
     }
 
     const cdbTargetsSlice = cdbTargets.toOwnedSlice(b.allocator) catch @panic("OOM");
     const buildStep = zcc.createStep(b, "cdb", cdbTargetsSlice);
     // Build everything in the project before generating the compile_commands
     for (cdbTargetsSlice) |cdbTarget| buildStep.dependOn(&cdbTarget.step);
+    // Regenerate compile_commands.json on every build, not only on `zig build cdb`
+    b.getInstallStep().dependOn(buildStep);
 }
