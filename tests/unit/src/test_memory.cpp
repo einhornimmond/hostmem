@@ -331,9 +331,11 @@ TEST(MemoryTest, CreateAndDestroy) {
   uint8_t *buffer = nullptr;
   ASSERT_EQ(hostmem_alloc(&buffer, 16, mem), HOSTMEM_SUCCESS);
 
-  // destroy releases the arena and the allocator itself
-  hostmem_destroy(mem, nullptr);
-  hostmem_destroy(nullptr, nullptr); // tolerated
+  // destroy releases the arena and the allocator itself. Malloc backed, so the descriptor
+  // really goes back: nothing is left for the arena warning to be about.
+  EXPECT_EQ(hostmem_destroy(mem, nullptr), HOSTMEM_SUCCESS);
+  // NULL is tolerated and is a success, not a warning -- nothing was handed out to keep
+  EXPECT_EQ(hostmem_destroy(nullptr, nullptr), HOSTMEM_SUCCESS);
 }
 
 TEST(MemoryTest, ResetDropsEverythingAtOnce) {

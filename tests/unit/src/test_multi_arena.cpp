@@ -311,10 +311,19 @@ TEST(MultiArena, NullAllocatorIsNotAFallback) {
   EXPECT_EQ(hostmem_multi_arena_shrink(nullptr), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_borrow(nullptr, nullptr, 64), HOSTMEM_ERROR_NULL_POINTER);
   EXPECT_EQ(hostmem_multi_arena_measure(nullptr, nullptr), HOSTMEM_ERROR_NULL_POINTER);
-  // NULL is a no-op, not a crash
+  // NULL is a no-op, not a crash. Destroy says so out loud: nothing was handed out, so nothing
+  // stayed behind -- the arena warning would read as the opposite, and it must not appear here
+  // whichever allocator is named.
   hostmem_multi_arena_reset(nullptr);
   hostmem_multi_arena_release(nullptr);
-  hostmem_multi_arena_destroy(nullptr, nullptr);
+  EXPECT_EQ(hostmem_multi_arena_destroy(nullptr, nullptr), HOSTMEM_SUCCESS);
+
+  alignas(8) uint8_t storage[64];
+  hostmem arena{};
+  ASSERT_EQ(hostmem_init_arena_borrow(&arena, storage, sizeof(storage)), HOSTMEM_SUCCESS);
+  EXPECT_EQ(hostmem_multi_arena_destroy(nullptr, &arena), HOSTMEM_SUCCESS);
+  EXPECT_EQ(arena.last_index, 0u); // and it did not move an index over a block it never had
+  hostmem_release(&arena);
 }
 
 TEST(MultiArena, CreateAndDestroy) {
@@ -326,7 +335,8 @@ TEST(MultiArena, CreateAndDestroy) {
   ASSERT_EQ(hostmem_multi_arena_alloc(&buffer, 64, m), HOSTMEM_SUCCESS);
   EXPECT_EQ(Measure(m).reserved, kArenaCapacity);
 
-  hostmem_multi_arena_destroy(m, nullptr);
+  // malloc backed, so the descriptor really goes back and there is nothing left to warn about
+  EXPECT_EQ(hostmem_multi_arena_destroy(m, nullptr), HOSTMEM_SUCCESS);
 }
 
 // ---------------------------------------------------------------------------
