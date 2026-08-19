@@ -1,8 +1,12 @@
 #include "hostmem/converter.h"
+#include "hostmem/memory_block.h"
 #include "hostmem/mono_timer.h"
 #include <gtest/gtest.h>
 
 #include "memory_limit.h"
+#include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <random>
 #include <string>
 
@@ -121,4 +125,394 @@ TEST(ConverterInt64, HandlesInt64Min) {
   EXPECT_EQ(hostmem_int64_to_string_size(INT64_MAX), 19u);
   EXPECT_EQ(hostmem_int64_to_string_size(-1), 2u);
   EXPECT_EQ(hostmem_int64_to_string_size(0), 1u);
+}
+
+/* --- hex ---------------------------------------------------------------------------------- */
+
+// The reference the fast conversion is checked against: one printf per byte, slow and obvious.
+// Written here rather than borrowed from a crypto library, because hostmem links none -- and a
+// reference that shares no line of code with the thing it judges is the point either way.
+static std::string reference_hex(const uint8_t *bytes, size_t count) {
+  std::string out;
+  char pair[3];
+  for (size_t i = 0; i < count; ++i) {
+    snprintf(pair, sizeof(pair), "%02x", static_cast<unsigned>(bytes[i]));
+    out += pair;
+  }
+  return out;
+}
+
+// a missing pointer and an empty block are different mistakes and say so
+TEST(HexTest, RejectsNullAndEmptySeparately) {
+  uint8_t payload[4] = {1, 2, 3, 4};
+  char out[16];
+  hostmem_memory_block data{payload, sizeof(payload)};
+  hostmem_memory_block empty{payload, 0};
+
+  EXPECT_EQ(hostmem_binary_to_hex(nullptr, &data), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_binary_to_hex(out, nullptr), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_binary_to_hex(out, &empty), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_binary_to_hex(out, &data), HOSTMEM_SUCCESS);
+
+  hostmem_memory_block no_data{nullptr, 4};
+  EXPECT_EQ(hostmem_binary_to_hex(out, &no_data), HOSTMEM_ERROR_NULL_POINTER);
+}
+
+// promise: the computed digits agree with the printf reference, for every byte value and every
+// length from one byte up. The lengths cover the loop's edges -- an optimised build converts the
+// bulk a vector register at a time and the remainder one byte at a time, so a mistake in either
+// half shows only at the lengths that reach it. Every byte value covers the arithmetic that
+// picks the digit, whose two ranges meet between '9' and 'a'.
+TEST(HexTest, MatchesTheReferenceForEveryByteValueAndLength) {
+  for (unsigned value = 0; value < 256; ++value) {
+    uint8_t payload[64];
+    for (size_t i = 0; i < sizeof(payload); ++i) {
+      payload[i] = static_cast<uint8_t>((value + i * 7u) & 0xFFu);
+    }
+    payload[0] = static_cast<uint8_t>(value);
+
+    for (size_t length = 1; length <= sizeof(payload); ++length) {
+      hostmem_memory_block block{payload, static_cast<uint32_t>(length)};
+
+      char ours[sizeof(payload) * 2 + 1];
+      ASSERT_EQ(hostmem_binary_to_hex(ours, &block), HOSTMEM_SUCCESS);
+      ASSERT_EQ(std::string(ours), reference_hex(payload, length))
+          << "value " << value << " length " << length;
+      ASSERT_EQ(strlen(ours), length * 2) << "value " << value << " length " << length;
+
+      uint8_t decoded[sizeof(payload)];
+      ASSERT_EQ(hostmem_binary_from_hex(decoded, ours), HOSTMEM_SUCCESS);
+      ASSERT_EQ(memcmp(decoded, payload, length), 0) << "value " << value << " length " << length;
+    }
+  }
+}
+
+// promise: the terminator lands right after the digits and nothing is written past it
+TEST(HexTest, WritesTheTerminatorAndNothingBeyondIt) {
+  uint8_t payload[7] = {0xde, 0xad, 0xbe, 0xef, 0x00, 0x7f, 0x80};
+  hostmem_memory_block block{payload, sizeof(payload)};
+
+  char guarded[sizeof(payload) * 2 + 1 + 8];
+  memset(guarded, 0x7A, sizeof(guarded));
+
+  ASSERT_EQ(hostmem_binary_to_hex(guarded, &block), HOSTMEM_SUCCESS);
+  EXPECT_STREQ(guarded, "deadbeef007f80");
+  EXPECT_EQ(guarded[sizeof(payload) * 2], '\0');
+  for (size_t i = sizeof(payload) * 2 + 1; i < sizeof(guarded); ++i) {
+    EXPECT_EQ(guarded[i], 0x7A) << "wrote past the terminator, at " << i;
+  }
+}
+
+// promise: upper case digits decode to the same bytes, and an empty string is a conversion of
+// nothing rather than an error
+TEST(HexTest, AcceptsBothDigitCasesAndTheEmptyString) {
+  uint8_t payload[8] = {0x00, 0x0f, 0xa5, 0xff, 0x10, 0xde, 0xad, 0xbe};
+  hostmem_memory_block block{payload, sizeof(payload)};
+
+  char lower[sizeof(payload) * 2 + 1];
+  ASSERT_EQ(hostmem_binary_to_hex(lower, &block), HOSTMEM_SUCCESS);
+  for (const char *c = lower; *c; ++c) { ASSERT_FALSE(isupper(static_cast<unsigned char>(*c))); }
+
+  std::string upper(lower);
+  for (char &c : upper) { c = static_cast<char>(toupper(static_cast<unsigned char>(c))); }
+
+  uint8_t from_lower[sizeof(payload)];
+  uint8_t from_upper[sizeof(payload)];
+  ASSERT_EQ(hostmem_binary_from_hex(from_lower, lower), HOSTMEM_SUCCESS);
+  ASSERT_EQ(hostmem_binary_from_hex(from_upper, upper.c_str()), HOSTMEM_SUCCESS);
+  EXPECT_EQ(memcmp(from_lower, payload, sizeof(payload)), 0);
+  EXPECT_EQ(memcmp(from_upper, payload, sizeof(payload)), 0);
+
+  // mixed case within one byte, which is where a single range check would fall over
+  uint8_t mixed[2];
+  ASSERT_EQ(hostmem_binary_from_hex(mixed, "aBcD"), HOSTMEM_SUCCESS);
+  EXPECT_EQ(mixed[0], 0xab);
+  EXPECT_EQ(mixed[1], 0xcd);
+
+  uint8_t untouched[4];
+  memset(untouched, 0x77, sizeof(untouched));
+  EXPECT_EQ(hostmem_binary_from_hex(untouched, ""), HOSTMEM_SUCCESS);
+  for (unsigned char byte : untouched) { EXPECT_EQ(byte, 0x77); }
+}
+
+// promise: anything that is not an even run of hex digits is refused, the output is cleared
+// rather than left half converted, and nothing is written past the bytes the string accounts
+// for. Separators are the case worth naming: some decoders can be told to skip them, this one
+// cannot, and a caller expecting that should meet a refusal rather than a guess.
+TEST(HexTest, RejectsWhatIsNotHexWithoutOverrunning) {
+  struct {
+    const char *what;
+    const char *input;
+    hostmem_result expected;
+  } const cases[] = {
+      {"odd number of digits", "abc", HOSTMEM_ERROR_INVALID_PARAM},
+      {"a single digit", "a", HOSTMEM_ERROR_INVALID_PARAM},
+      {"not a digit, first position", "zz00", HOSTMEM_ERROR_DECODE_FAILED},
+      {"not a digit, low nibble", "azcd", HOSTMEM_ERROR_DECODE_FAILED},
+      {"not a digit, last position", "00ffz0", HOSTMEM_ERROR_DECODE_FAILED},
+      {"separator between the bytes", "de:ad", HOSTMEM_ERROR_INVALID_PARAM},
+      {"separators, even length", "de:ad:be", HOSTMEM_ERROR_DECODE_FAILED},
+      {"a space", "de ad", HOSTMEM_ERROR_INVALID_PARAM},
+      {"the character right below '0'", "//00", HOSTMEM_ERROR_DECODE_FAILED},
+      {"the character right above '9'", "::00", HOSTMEM_ERROR_DECODE_FAILED},
+      {"the character right above 'f'", "gg00", HOSTMEM_ERROR_DECODE_FAILED},
+      {"the character right above 'F'", "GG00", HOSTMEM_ERROR_DECODE_FAILED},
+      // spelled in two literals: a hex escape swallows every hex digit that follows it, so
+      // "\xa400" would be one character with a value nobody meant
+      {"a byte above 0x7F",
+       "\xc3\xa4"
+       "00",
+       HOSTMEM_ERROR_DECODE_FAILED},
+  };
+
+  for (const auto &c : cases) {
+    uint8_t guarded[16];
+    memset(guarded, 0xCD, sizeof(guarded));
+
+    EXPECT_EQ(hostmem_binary_from_hex(guarded, c.input), c.expected) << c.what;
+
+    const size_t decoded_bytes = strlen(c.input) / 2;
+    for (size_t i = decoded_bytes; i < sizeof(guarded); ++i) {
+      EXPECT_EQ(guarded[i], 0xCD) << c.what << ": wrote past byte " << decoded_bytes;
+    }
+    if (c.expected == HOSTMEM_ERROR_DECODE_FAILED) {
+      for (size_t i = 0; i < decoded_bytes; ++i) {
+        EXPECT_EQ(guarded[i], 0) << c.what << ": left a half converted byte at " << i;
+      }
+    }
+  }
+
+  uint8_t out[4];
+  EXPECT_EQ(hostmem_binary_from_hex(nullptr, "dead"), HOSTMEM_ERROR_NULL_POINTER);
+  EXPECT_EQ(hostmem_binary_from_hex(out, nullptr), HOSTMEM_ERROR_NULL_POINTER);
+}
+
+// promise: every one of the 256 characters is judged the same whether it stands in the high or
+// the low nibble, and only the 22 hex digits are let through. The validity test is arithmetic
+// rather than a table, so a wrong constant would open a whole range at once.
+TEST(HexTest, AcceptsExactlyTheHexDigitsInBothNibbles) {
+  for (unsigned c = 1; c < 256; ++c) { // 0 would end the string instead of being read
+    const bool is_digit =
+        (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+    char high_bad[3] = {static_cast<char>(c), '0', '\0'};
+    char low_bad[3] = {'0', static_cast<char>(c), '\0'};
+    uint8_t out[1];
+
+    EXPECT_EQ(
+        hostmem_binary_from_hex(out, high_bad),
+        is_digit ? HOSTMEM_SUCCESS : HOSTMEM_ERROR_DECODE_FAILED
+    ) << "character "
+      << c << " in the high nibble";
+    EXPECT_EQ(
+        hostmem_binary_from_hex(out, low_bad),
+        is_digit ? HOSTMEM_SUCCESS : HOSTMEM_ERROR_DECODE_FAILED
+    ) << "character "
+      << c << " in the low nibble";
+  }
+}
+
+/* --- uuid --------------------------------------------------------------------------------- */
+
+TEST(UuidTest, RoundtripValidUuid) {
+  const uint8_t original[HOSTMEM_UUID_BINARY_SIZE] = {0x48, 0x06, 0x6a, 0x47, 0xa0, 0x2f,
+                                                      0x45, 0x96, 0x88, 0x3c, 0x30, 0x2c,
+                                                      0x2b, 0x1a, 0xa1, 0xe1};
+  const char expected[] = "48066a47-a02f-4596-883c-302c2b1aa1e1";
+
+  char uuid_string[HOSTMEM_UUID_STRING_LENGTH + 1];
+  hostmem_uuid_to_string(uuid_string, original);
+  EXPECT_STREQ(uuid_string, expected);
+  EXPECT_EQ(strlen(uuid_string), HOSTMEM_UUID_STRING_LENGTH);
+
+  uint8_t decoded[HOSTMEM_UUID_BINARY_SIZE];
+  EXPECT_EQ(hostmem_uuid_from_string(decoded, uuid_string), HOSTMEM_SUCCESS);
+  EXPECT_EQ(memcmp(original, decoded, sizeof(original)), 0);
+}
+
+TEST(UuidTest, RejectsNullAndWrongLength) {
+  uint8_t uuid[HOSTMEM_UUID_BINARY_SIZE];
+
+  EXPECT_EQ(
+      hostmem_uuid_from_string(nullptr, "48066a47-a02f-4596-883c-302c2b1aa1e1"),
+      HOSTMEM_ERROR_NULL_POINTER
+  );
+  EXPECT_EQ(hostmem_uuid_from_string(uuid, nullptr), HOSTMEM_ERROR_NULL_POINTER);
+
+  // a length that is not 36 is a parameter the caller can fix, not an undecodable string
+  EXPECT_EQ(hostmem_uuid_from_string(uuid, ""), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(hostmem_uuid_from_string(uuid, "too-short"), HOSTMEM_ERROR_INVALID_PARAM);
+  EXPECT_EQ(
+      hostmem_uuid_from_string(uuid, "48066a47-a02f-4596-883c-302c2b1aa1e"),
+      HOSTMEM_ERROR_INVALID_PARAM
+  );
+  EXPECT_EQ(
+      hostmem_uuid_from_string(uuid, "48066a47-a02f-4596-883c-302c2b1aa1e1-extra"),
+      HOSTMEM_ERROR_INVALID_PARAM
+  );
+
+  EXPECT_EQ(
+      hostmem_uuid_from_string(uuid, "XXXX6a47-a02f-4596-883c-302c2b1aa1e1"),
+      HOSTMEM_ERROR_DECODE_FAILED
+  );
+}
+
+// promise: a string of the documented length whose separators are missing or sit elsewhere is
+// rejected. Accepting it would be worse than a wrong answer -- every absent separator turns two
+// more characters into an output byte, and the first case below would write 18 bytes into the 16
+// the caller owns. The guard bytes here catch that without a sanitizer.
+TEST(UuidTest, SeparatorsMustSitWhereTheFormatSaysAndNeverOverrun) {
+  struct {
+    const char *what;
+    const char *input;
+  } const cases[] = {
+      {"no separators at all", "48066a47a02f4596883c302c2b1aa1e1abcd"},
+      {"two separators short", "48066a47a02f4596-883c-302c2b1aa1e1ab"},
+      {"separators only", "------------------------------------"},
+      {"first separator one group early", "4806-6a47a02f-4596-883c-302c2b1aa1e1"},
+      {"a digit where the last separator belongs", "48066a47-a02f-4596-883cf302c2b1aa1e1"},
+  };
+
+  for (const auto &c : cases) {
+    uint8_t guarded[HOSTMEM_UUID_BINARY_SIZE * 2];
+    memset(guarded, 0xCD, sizeof(guarded));
+
+    EXPECT_EQ(hostmem_uuid_from_string(guarded, c.input), HOSTMEM_ERROR_DECODE_FAILED) << c.what;
+
+    for (size_t i = HOSTMEM_UUID_BINARY_SIZE; i < sizeof(guarded); ++i) {
+      EXPECT_EQ(guarded[i], 0xCD) << c.what << ": wrote past the 16 bytes it was given, at " << i;
+    }
+    // a rejected string leaves no half decoded bytes behind
+    for (size_t i = 0; i < HOSTMEM_UUID_BINARY_SIZE; ++i) { EXPECT_EQ(guarded[i], 0) << c.what; }
+  }
+}
+
+// promise: every byte value survives the round trip, at every one of the 16 positions, in both
+// digit cases -- the lookup tables both directions use are indexed by the data itself, so a
+// wrong entry would show up only for the values that reach it.
+TEST(UuidTest, RoundTripCoversEveryByteValueAndBothCases) {
+  for (unsigned value = 0; value < 256; ++value) {
+    for (size_t position = 0; position < HOSTMEM_UUID_BINARY_SIZE; ++position) {
+      uint8_t original[HOSTMEM_UUID_BINARY_SIZE];
+      memset(original, 0x5A, sizeof(original));
+      original[position] = static_cast<uint8_t>(value);
+
+      char text[HOSTMEM_UUID_STRING_LENGTH + 1];
+      hostmem_uuid_to_string(text, original);
+      ASSERT_EQ(strlen(text), static_cast<size_t>(HOSTMEM_UUID_STRING_LENGTH));
+      ASSERT_EQ(text[8], '-');
+      ASSERT_EQ(text[13], '-');
+      ASSERT_EQ(text[18], '-');
+      ASSERT_EQ(text[23], '-');
+
+      uint8_t decoded[HOSTMEM_UUID_BINARY_SIZE];
+      ASSERT_EQ(hostmem_uuid_from_string(decoded, text), HOSTMEM_SUCCESS) << text;
+      ASSERT_EQ(memcmp(original, decoded, sizeof(original)), 0) << text;
+
+      char upper[HOSTMEM_UUID_STRING_LENGTH + 1];
+      memcpy(upper, text, sizeof(upper));
+      for (size_t i = 0; i < HOSTMEM_UUID_STRING_LENGTH; ++i) {
+        upper[i] = static_cast<char>(toupper(static_cast<unsigned char>(upper[i])));
+      }
+      uint8_t decoded_upper[HOSTMEM_UUID_BINARY_SIZE];
+      ASSERT_EQ(hostmem_uuid_from_string(decoded_upper, upper), HOSTMEM_SUCCESS) << upper;
+      ASSERT_EQ(memcmp(original, decoded_upper, sizeof(original)), 0) << upper;
+    }
+  }
+}
+
+// promise: the 32 hex characters agree with what the block conversion writes for the same bytes,
+// separators removed. Two implementations of the same alphabet, one computed and one from a
+// table -- if they ever drifted apart, a uuid would read differently depending on which one
+// rendered it.
+TEST(UuidTest, TheSameBytesReadTheSameThroughBothConversions) {
+  for (unsigned seed = 0; seed < 64; ++seed) {
+    uint8_t bytes[HOSTMEM_UUID_BINARY_SIZE];
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+      bytes[i] = static_cast<uint8_t>((seed * 37u + i * 13u) & 0xFFu);
+    }
+
+    char uuid_form[HOSTMEM_UUID_STRING_LENGTH + 1];
+    hostmem_uuid_to_string(uuid_form, bytes);
+
+    hostmem_memory_block block{bytes, sizeof(bytes)};
+    char hex_form[sizeof(bytes) * 2 + 1];
+    ASSERT_EQ(hostmem_binary_to_hex(hex_form, &block), HOSTMEM_SUCCESS);
+
+    std::string without_separators;
+    for (size_t i = 0; i < HOSTMEM_UUID_STRING_LENGTH; ++i) {
+      if (uuid_form[i] != '-') { without_separators += uuid_form[i]; }
+    }
+    EXPECT_EQ(without_separators, std::string(hex_form)) << "seed " << seed;
+  }
+}
+
+// promise: writing stops at the terminator, and the terminator sits at index 36
+TEST(UuidTest, WritesExactlyThirtySevenBytes) {
+  const uint8_t bytes[HOSTMEM_UUID_BINARY_SIZE] = {0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+                                                   0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee};
+  char guarded[HOSTMEM_UUID_STRING_LENGTH + 1 + 8];
+  memset(guarded, 0x7A, sizeof(guarded));
+
+  hostmem_uuid_to_string(guarded, bytes);
+  EXPECT_STREQ(guarded, "ff001122-3344-5566-7788-99aabbccddee");
+  EXPECT_EQ(guarded[HOSTMEM_UUID_STRING_LENGTH], '\0');
+  for (size_t i = HOSTMEM_UUID_STRING_LENGTH + 1; i < sizeof(guarded); ++i) {
+    EXPECT_EQ(guarded[i], 0x7A) << "wrote past the terminator, at " << i;
+  }
+}
+
+TEST(UuidTest, AllZerosAndKnownStrings) {
+  const uint8_t zeros[HOSTMEM_UUID_BINARY_SIZE] = {0};
+  char uuid_string[HOSTMEM_UUID_STRING_LENGTH + 1];
+  hostmem_uuid_to_string(uuid_string, zeros);
+  EXPECT_STREQ(uuid_string, "00000000-0000-0000-0000-000000000000");
+
+  uint8_t decoded[HOSTMEM_UUID_BINARY_SIZE];
+  EXPECT_EQ(hostmem_uuid_from_string(decoded, uuid_string), HOSTMEM_SUCCESS);
+  EXPECT_EQ(memcmp(zeros, decoded, sizeof(zeros)), 0);
+
+  const char *known[] = {
+      "123e4567-e89b-12d3-a456-426614174000",
+      "00000000-0000-0000-0000-000000000000",
+      "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  };
+
+  for (const char *str : known) {
+    uint8_t bytes[HOSTMEM_UUID_BINARY_SIZE];
+    EXPECT_EQ(hostmem_uuid_from_string(bytes, str), HOSTMEM_SUCCESS) << str;
+
+    char encoded[HOSTMEM_UUID_STRING_LENGTH + 1];
+    hostmem_uuid_to_string(encoded, bytes);
+    EXPECT_STREQ(encoded, str);
+  }
+}
+
+// promise: every one of the 256 characters is judged the same at every hex position, and only
+// the 22 hex digits are let through. The sentinel table is what settles that, and a wrong entry
+// reaches only the string that carries exactly that character.
+TEST(UuidTest, AcceptsExactlyTheHexDigitsAtEveryPosition) {
+  const char valid[] = "48066a47-a02f-4596-883c-302c2b1aa1e1";
+
+  for (size_t position = 0; position < HOSTMEM_UUID_STRING_LENGTH; ++position) {
+    const bool is_separator = position == 8 || position == 13 || position == 18 || position == 23;
+    if (is_separator) { continue; }
+
+    for (unsigned c = 1; c < 256; ++c) { // 0 would shorten the string instead of being read
+      const bool is_digit =
+          (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+      char text[HOSTMEM_UUID_STRING_LENGTH + 1];
+      memcpy(text, valid, sizeof(text));
+      text[position] = static_cast<char>(c);
+
+      uint8_t decoded[HOSTMEM_UUID_BINARY_SIZE];
+      ASSERT_EQ(
+          hostmem_uuid_from_string(decoded, text),
+          is_digit ? HOSTMEM_SUCCESS : HOSTMEM_ERROR_DECODE_FAILED
+      ) << "character "
+        << c << " at position " << position;
+    }
+  }
 }
