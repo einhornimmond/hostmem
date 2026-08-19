@@ -49,7 +49,7 @@ up.
 | `hostmem/multi_arena.h` | a chain of arenas that opens another one instead of running dry |
 | `hostmem/fixed_arena_pool.h` | a fixed set of equal sized arenas, lent out and returned; the peak is known at init |
 | `hostmem/bucket_vector.h` | growing sequence with stable element addresses; no copy on growth |
-| `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf` |
+| `hostmem/converter.h` | integer to decimal string, roughly 4× faster than `snprintf`; bytes to lowercase hex and back, uuid to its 8-4-4-4-12 form and back |
 | `hostmem/duration.h` | nanoseconds to a readable span |
 | `hostmem/mono_timer.h` | monotonic clock, one type, three units |
 | `hostmem/result.h` | one result code for everything, with a range reserved for you |

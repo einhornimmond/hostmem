@@ -1,6 +1,7 @@
 #ifndef HOSTMEM_CONVERTER_H
 #define HOSTMEM_CONVERTER_H
 
+#include "hostmem/memory_block.h"
 #include "hostmem/result.h"
 
 #include <stddef.h>
@@ -12,11 +13,24 @@ extern "C" {
 
 /**
  * @defgroup hostmem_converter hostmem_converter
- * @brief Efficient conversion of uint64_t to string and size measurement.
- * Provides functions to convert uint64_t values to their string representation using the
- * LR-algorithm, as well as a function to calculate the required string size for a given uint64_t
- * value. These functions are optimized for performance and can be used in hot paths where
- * efficiency is critical.
+ * @brief Numbers and raw bytes rendered as text, and read back.
+ *
+ * Two families live here. The first turns a uint64_t or an int64_t into decimal digits with the
+ * LR-algorithm, and measures how many places that will take before a single one is written. The
+ * second carries bytes across to lowercase hex and back, whole blocks of them or a uuid in its
+ * canonical 8-4-4-4-12 form. Both are built for hot paths: no allocation, no format string
+ * parsing, every destination sized by the caller.
+ *
+ * @warning The hex pair does not run in constant time, so neither half belongs on secret
+ * material. That is not a matter of how it is written: hostmem_binary_to_hex() computes each
+ * digit instead of looking it up, and in an optimised build its vectorised body really is
+ * branchless -- but the scalar path beside it, which takes the remainder and takes short inputs
+ * whole, compiles to a compare and a jump on the nibble. Rewriting the conditional as an
+ * arithmetic mask does not move it; the compiler turns that back into a branch as well, and an
+ * unoptimised build has no vector path at all. The uuid pair reads lookup tables on top of that.
+ * Keys, seeds and passphrases belong in a crypto library's constant time conversion -- hostmem
+ * links none and offers none. Hashes, transaction ids, public keys, uuids and anything else
+ * already public are exactly what these are for.
  * @{
  */
 
@@ -77,6 +91,91 @@ uint8_t hostmem_int64_to_string_known_string_size(char *buffer, int64_t value, u
  */
 uint8_t hostmem_uint64_to_string_size(uint64_t value);
 uint8_t hostmem_int64_to_string_size(int64_t value);
+
+/**
+ * @brief Write @p data as lowercase hex into a buffer the caller sized.
+ *
+ * Each byte becomes two characters in order, and a terminator closes the run. Nothing is
+ * allocated and nothing is remembered: the bytes flow through and the buffer holds what is
+ * left.
+ *
+ * @param[out] result_buffer Expected to hold data->size * 2 + 1 bytes. Not checkable from
+ *                           here -- sizing it is the caller's part of the contract.
+ * @param[in]  data          Block to encode; not NULL and not empty.
+ * @retval HOSTMEM_SUCCESS             Hex written, terminator included.
+ * @retval HOSTMEM_ERROR_NULL_POINTER  @p result_buffer, @p data or its data pointer is NULL.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM @p data holds no bytes.
+ * @note Not constant time; see the warning on this group.
+ * @whisper Every byte says its name twice, in the same quiet alphabet
+ */
+hostmem_result hostmem_binary_to_hex(char *result_buffer, const hostmem_memory_block *data);
+
+/**
+ * @brief Read a hex string back into the bytes it spells.
+ *
+ * Both digit cases are accepted. Nothing is skipped: a separator between the bytes makes the
+ * string undecodable rather than being ignored.
+ *
+ * @param[out] result_buffer Expected to hold strlen(hex) / 2 bytes. Set to all zeros when the
+ *                           string does not decode, so a caller that overlooks the result code
+ *                           never reads half converted bytes.
+ * @param[in]  hex           Null terminated string of an even number of hex digits. Empty is
+ *                           allowed and writes nothing.
+ * @retval HOSTMEM_SUCCESS             strlen(hex) / 2 bytes written.
+ * @retval HOSTMEM_ERROR_NULL_POINTER  @p result_buffer or @p hex is NULL.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM @p hex has an odd number of characters.
+ * @retval HOSTMEM_ERROR_DECODE_FAILED @p hex holds a character that is not a hex digit.
+ * @note Not constant time; see the warning on this group.
+ * @whisper Two characters settle back into the one byte they came from
+ */
+hostmem_result hostmem_binary_from_hex(uint8_t *result_buffer, const char *hex);
+
+/** @brief Bytes a uuid occupies in binary form. */
+#define HOSTMEM_UUID_BINARY_SIZE 16
+
+/** @brief Characters of the canonical 8-4-4-4-12 form, terminator not counted.
+ *
+ *  A buffer for hostmem_uuid_to_string() needs one more than this.
+ */
+#define HOSTMEM_UUID_STRING_LENGTH 36
+
+/**
+ * @brief Parse the canonical 8-4-4-4-12 form into 16 bytes.
+ *
+ * The layout is fixed, so nothing has to be discovered while reading: each byte is picked up
+ * from the position the format assigns it, and the verdict settles once at the end rather than
+ * at every digit.
+ *
+ * @param[out] uuid        Expected to be @ref HOSTMEM_UUID_BINARY_SIZE bytes. Set to all zeros
+ *                         when the string does not parse, so a caller that overlooks the result
+ *                         code never reads half decoded bytes.
+ * @param[in]  uuid_string Expected to be exactly @ref HOSTMEM_UUID_STRING_LENGTH characters long
+ *                         plus its terminator, with the separators at index 8, 13, 18 and 23.
+ *                         Both digit cases are accepted.
+ * @retval HOSTMEM_SUCCESS             16 bytes written.
+ * @retval HOSTMEM_ERROR_NULL_POINTER  @p uuid or @p uuid_string is NULL.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM @p uuid_string is not 36 characters long.
+ * @retval HOSTMEM_ERROR_DECODE_FAILED A separator is missing or misplaced, or a character where
+ *                                     a hex digit belongs is not one.
+ * @note Not constant time; see the warning on this group.
+ * @whisper Thirty-six characters fold back into sixteen bytes
+ */
+hostmem_result hostmem_uuid_from_string(uint8_t *uuid, const char *uuid_string);
+
+/**
+ * @brief Write 16 bytes as the canonical 8-4-4-4-12 form.
+ *
+ * Each byte lands at its final position straight away, separators and terminator after it.
+ * Nothing is validated: any 16 bytes are a uuid as far as this is concerned, and the version
+ * and variant fields are the caller's business.
+ *
+ * @param[out] result_buffer Expected to hold @ref HOSTMEM_UUID_STRING_LENGTH + 1 bytes,
+ *                           terminator included; not NULL.
+ * @param[in]  uuid          The 16 bytes to render; not NULL.
+ * @note Not constant time; see the warning on this group.
+ * @whisper Sixteen bytes settle into the shape the world reads them by
+ */
+void hostmem_uuid_to_string(char *result_buffer, const uint8_t uuid[HOSTMEM_UUID_BINARY_SIZE]);
 
 /**
  * @}
