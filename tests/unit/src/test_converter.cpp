@@ -279,6 +279,14 @@ TEST(HexTest, RejectsWhatIsNotHexWithoutOverrunning) {
       for (size_t i = 0; i < decoded_bytes; ++i) {
         EXPECT_EQ(guarded[i], 0) << c.what << ": left a half converted byte at " << i;
       }
+    } else {
+      // A parameter error is refused before anything is written, so the buffer still holds what
+      // the caller put there. Clearing it would erase bytes this call never produced, and the
+      // range to clear is not knowable from a length taken off the string. Wiping a buffer that
+      // has served its purpose stays with whoever owns it.
+      for (size_t i = 0; i < decoded_bytes; ++i) {
+        EXPECT_EQ(guarded[i], 0xCD) << c.what << ": touched a buffer it had refused, at " << i;
+      }
     }
   }
 
@@ -328,6 +336,37 @@ TEST(UuidTest, RoundtripValidUuid) {
   uint8_t decoded[HOSTMEM_UUID_BINARY_SIZE];
   EXPECT_EQ(hostmem_uuid_from_string(decoded, uuid_string), HOSTMEM_SUCCESS);
   EXPECT_EQ(memcmp(original, decoded, sizeof(original)), 0);
+}
+
+// promise: a length that is wrong is caught before the parser writes anything, so the buffer is
+// left as the caller had it. Only HOSTMEM_ERROR_DECODE_FAILED clears it -- that is the path where
+// the parser has already put something there, or is about to.
+TEST(UuidTest, AWrongLengthLeavesTheBufferAlone) {
+  const char *const cases[] = {
+      "",
+      "too-short",
+      "48066a47-a02f-4596-883c-302c2b1aa1e",
+      "48066a47-a02f-4596-883c-302c2b1aa1e1-extra",
+  };
+
+  for (const char *input : cases) {
+    uint8_t guarded[HOSTMEM_UUID_BINARY_SIZE];
+    memset(guarded, 0xCD, sizeof(guarded));
+
+    EXPECT_EQ(hostmem_uuid_from_string(guarded, input), HOSTMEM_ERROR_INVALID_PARAM) << input;
+    for (unsigned char byte : guarded) {
+      EXPECT_EQ(byte, 0xCD) << input << ": touched a buffer it had refused";
+    }
+  }
+
+  // and the other side of the rule: a string of the right length that does not parse is cleared
+  uint8_t cleared[HOSTMEM_UUID_BINARY_SIZE];
+  memset(cleared, 0xCD, sizeof(cleared));
+  EXPECT_EQ(
+      hostmem_uuid_from_string(cleared, "XXXX6a47-a02f-4596-883c-302c2b1aa1e1"),
+      HOSTMEM_ERROR_DECODE_FAILED
+  );
+  for (unsigned char byte : cleared) { EXPECT_EQ(byte, 0); }
 }
 
 TEST(UuidTest, RejectsNullAndWrongLength) {
