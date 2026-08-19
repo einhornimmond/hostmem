@@ -23,11 +23,10 @@ what the commits show rather than what was noted at the time.
   something there or is about to. The documentation now says which path does which, and the tests
   pin both.
 
-  The behaviour did not change and does not need to. Clearing on a parameter error would erase
-  bytes the call never produced, and for the hex pair the range to clear is not knowable from a
-  signature that takes its length off the string -- a caller-supplied size would be a claim, not a
-  guarantee. Wiping a buffer that has served its purpose stays with whoever owns it, which the
-  group warning already says.
+  The behaviour did not change and does not need to. A string of odd length is refused before
+  anything is written, so clearing on that path would erase bytes the call never produced.
+  Wiping a buffer that has served its purpose belongs to whoever owns it, which the group
+  warning already says.
 
 ## 0.4.0 -- 2026-08-19
 

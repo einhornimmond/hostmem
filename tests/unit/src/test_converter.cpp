@@ -281,9 +281,8 @@ TEST(HexTest, RejectsWhatIsNotHexWithoutOverrunning) {
       }
     } else {
       // A parameter error is refused before anything is written, so the buffer still holds what
-      // the caller put there. Clearing it would erase bytes this call never produced, and the
-      // range to clear is not knowable from a length taken off the string. Wiping a buffer that
-      // has served its purpose stays with whoever owns it.
+      // the caller put there. Clearing it would erase bytes this call never produced. Wiping a
+      // buffer that has served its purpose stays with whoever owns it.
       for (size_t i = 0; i < decoded_bytes; ++i) {
         EXPECT_EQ(guarded[i], 0xCD) << c.what << ": touched a buffer it had refused, at " << i;
       }

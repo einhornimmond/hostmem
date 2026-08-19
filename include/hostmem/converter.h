@@ -128,8 +128,7 @@ hostmem_result hostmem_binary_to_hex(char *result_buffer, const hostmem_memory_b
  * @retval HOSTMEM_ERROR_INVALID_PARAM @p hex has an odd number of characters. Refused before
  *                                     anything is written, so @p result_buffer is left exactly
  *                                     as the caller had it -- there is nothing of this call's
- *                                     making in it to clear, and how far it even reaches is not
- *                                     knowable from a length taken off the string.
+ *                                     making in it to clear.
  * @retval HOSTMEM_ERROR_DECODE_FAILED @p hex holds a character that is not a hex digit. The
  *                                     strlen(hex) / 2 bytes are zeroed.
  * @note Not constant time; see the warning on this group.
