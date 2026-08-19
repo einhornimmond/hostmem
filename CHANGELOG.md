@@ -11,6 +11,23 @@ than left to be discovered.
 Entries before 0.4.0 were reconstructed from the git history after the fact, so they summarise
 what the commits show rather than what was noted at the time.
 
+## 0.4.1 -- 2026-08-19
+
+### Fixed
+
+- The wiping guarantee on `hostmem_binary_from_hex()` and `hostmem_uuid_from_string()` promised
+  more than either function does. Both said the output is set to all zeros "when the string does
+  not decode", which reads as covering every refusal -- but a length that is wrong is caught
+  before anything is written, and on that path the buffer is left exactly as the caller had it.
+  Only HOSTMEM_ERROR_DECODE_FAILED clears it, which is the path where the parser has already put
+  something there or is about to. The documentation now says which path does which, and the tests
+  pin both.
+
+  The behaviour did not change and does not need to. A string of odd length is refused before
+  anything is written, so clearing on that path would erase bytes the call never produced.
+  Wiping a buffer that has served its purpose belongs to whoever owns it, which the group
+  warning already says.
+
 ## 0.4.0 -- 2026-08-19
 
 ### Added

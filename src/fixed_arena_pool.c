@@ -30,11 +30,9 @@
 static_assert(
     sizeof(hostmem *) <= 8, "the free list link has to fit in the smallest arena, which is 8 bytes"
 );
+static_assert(sizeof(hostmem) <= UINT16_MAX - 1, "hostmem has an unreasonable size");
 static_assert(
-  sizeof(hostmem) <= UINT16_MAX-1, "hostmem has an unreasonable size"
-);
-static_assert(
-  HOSTMEM_ALIGN8(sizeof(hostmem)) == sizeof(hostmem), "hostmem struct must be 8-Byte aligned"
+    HOSTMEM_ALIGN8(sizeof(hostmem)) == sizeof(hostmem), "hostmem struct must be 8-Byte aligned"
 );
 
 /** Where the buffers begin, measured from the front of the block. */

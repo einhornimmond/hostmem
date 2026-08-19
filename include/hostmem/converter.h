@@ -116,15 +116,21 @@ hostmem_result hostmem_binary_to_hex(char *result_buffer, const hostmem_memory_b
  * Both digit cases are accepted. Nothing is skipped: a separator between the bytes makes the
  * string undecodable rather than being ignored.
  *
- * @param[out] result_buffer Expected to hold strlen(hex) / 2 bytes. Set to all zeros when the
- *                           string does not decode, so a caller that overlooks the result code
- *                           never reads half converted bytes.
+ * @param[out] result_buffer Expected to hold strlen(hex) / 2 bytes. Those bytes are set to all
+ *                           zeros when the string turns out not to be hex, so a caller that
+ *                           overlooks the result code never reads half converted bytes. Only
+ *                           what this call decoded is cleared; whatever the buffer held before
+ *                           belongs to the caller and is left alone.
  * @param[in]  hex           Null terminated string of an even number of hex digits. Empty is
  *                           allowed and writes nothing.
  * @retval HOSTMEM_SUCCESS             strlen(hex) / 2 bytes written.
  * @retval HOSTMEM_ERROR_NULL_POINTER  @p result_buffer or @p hex is NULL.
- * @retval HOSTMEM_ERROR_INVALID_PARAM @p hex has an odd number of characters.
- * @retval HOSTMEM_ERROR_DECODE_FAILED @p hex holds a character that is not a hex digit.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM @p hex has an odd number of characters. Refused before
+ *                                     anything is written, so @p result_buffer is left exactly
+ *                                     as the caller had it -- there is nothing of this call's
+ *                                     making in it to clear.
+ * @retval HOSTMEM_ERROR_DECODE_FAILED @p hex holds a character that is not a hex digit. The
+ *                                     strlen(hex) / 2 bytes are zeroed.
  * @note Not constant time; see the warning on this group.
  * @whisper Two characters settle back into the one byte they came from
  */
@@ -147,16 +153,18 @@ hostmem_result hostmem_binary_from_hex(uint8_t *result_buffer, const char *hex);
  * at every digit.
  *
  * @param[out] uuid        Expected to be @ref HOSTMEM_UUID_BINARY_SIZE bytes. Set to all zeros
- *                         when the string does not parse, so a caller that overlooks the result
- *                         code never reads half decoded bytes.
+ *                         on HOSTMEM_ERROR_DECODE_FAILED, so a caller that overlooks the result
+ *                         code never reads half decoded bytes. A length that is wrong is caught
+ *                         before any of it is written and leaves it as the caller had it.
  * @param[in]  uuid_string Expected to be exactly @ref HOSTMEM_UUID_STRING_LENGTH characters long
  *                         plus its terminator, with the separators at index 8, 13, 18 and 23.
  *                         Both digit cases are accepted.
  * @retval HOSTMEM_SUCCESS             16 bytes written.
  * @retval HOSTMEM_ERROR_NULL_POINTER  @p uuid or @p uuid_string is NULL.
- * @retval HOSTMEM_ERROR_INVALID_PARAM @p uuid_string is not 36 characters long.
+ * @retval HOSTMEM_ERROR_INVALID_PARAM @p uuid_string is not 36 characters long. Refused before
+ *                                     anything is written, so @p uuid is untouched.
  * @retval HOSTMEM_ERROR_DECODE_FAILED A separator is missing or misplaced, or a character where
- *                                     a hex digit belongs is not one.
+ *                                     a hex digit belongs is not one. @p uuid is zeroed.
  * @note Not constant time; see the warning on this group.
  * @whisper Thirty-six characters fold back into sixteen bytes
  */
