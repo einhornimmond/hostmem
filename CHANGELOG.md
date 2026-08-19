@@ -27,8 +27,9 @@ what the commits show rather than what was noted at the time.
     fixed scattered positions are not a run a vectoriser can help with. 5.6 ns to write, 15.9 ns
     to read.
   - `HOSTMEM_UUID_BINARY_SIZE` (16) and `HOSTMEM_UUID_STRING_LENGTH` (36).
-- `benchmarks/src/bench_binaryToString.c`, covering both directions of all four at 16, 32, 64
-  and 1024 bytes. No baseline beside them: hostmem links no crypto library, so the constant time
+- `benchmarks/src/bench_binaryToString.c`, covering both directions of each pair: the hex
+  conversions at 16, 32, 64 and 1024 bytes, the uuid conversions at the 16 bytes the format
+  fixes them to. No baseline beside them: hostmem links no crypto library, so the constant time
   conversions such a library ships are not there to compare against.
 
 ### Notes
