@@ -1,6 +1,6 @@
 .{
     .name = .hostmem,
-    .version = "0.3.1",
+    .version = "0.4.0",
     .dependencies = .{
         .googletest = .{
             .url = "git+https://github.com/allyourcodebase/googletest#e2affdd13730f800aa63772039f2adfa971461b6",

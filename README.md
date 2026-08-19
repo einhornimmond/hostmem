@@ -159,6 +159,10 @@ lib.linkLibrary(hostmem.artifact("hostmem"));
 lib.addIncludePath(hostmem.path("include"));
 ```
 
+## Changes
+
+[CHANGELOG.md](CHANGELOG.md) -- what moved in each release, newest first.
+
 ## License
 
 Apache 2.0
